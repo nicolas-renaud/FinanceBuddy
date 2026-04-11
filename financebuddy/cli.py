@@ -6,6 +6,11 @@ import typer
 app = typer.Typer(help="Local-first finance crawler CLI.")
 
 
+@app.callback()
+def main() -> None:
+    """FinanceBuddy CLI."""
+
+
 @app.command()
 def crawl() -> None:
     """Run a crawl for a configured access profile."""
