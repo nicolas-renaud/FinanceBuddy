@@ -1,0 +1,23 @@
+{
+  "Data": [
+    {
+      "AccountKey": "ACC-001",
+      "AssetType": "Stock",
+      "Description": "Novo Nordisk B",
+      "LastUpdated": "2026-04-12T08:15:00Z",
+      "Quantity": "12.5",
+      "Symbol": "NOVO-B",
+      "Currency": "DKK",
+      "Price": "987.40"
+    },
+    {
+      "AccountKey": "ACC-002",
+      "AssetType": "ETF",
+      "Description": "iShares Core S&P 500 UCITS ETF",
+      "Quantity": "8",
+      "Symbol": "CSPX",
+      "Currency": "USD",
+      "Price": "512.30"
+    }
+  ]
+}

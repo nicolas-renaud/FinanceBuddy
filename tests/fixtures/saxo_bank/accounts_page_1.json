@@ -1,0 +1,11 @@
+{
+  "Data": [
+    {
+      "AccountKey": "ACC-001",
+      "Name": "Saxo Global Account",
+      "AccountType": "Cash",
+      "Currency": "EUR"
+    }
+  ],
+  "__next": "/port/v1/accounts?page=2"
+}

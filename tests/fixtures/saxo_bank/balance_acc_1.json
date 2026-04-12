@@ -1,0 +1,10 @@
+{
+  "AccountKey": "ACC-001",
+  "Data": [
+    {
+      "CashBalance": "1250.50",
+      "Currency": "EUR",
+      "LastUpdated": "2026-04-12T08:10:00Z"
+    }
+  ]
+}

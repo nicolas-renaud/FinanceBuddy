@@ -1,0 +1,10 @@
+{
+  "Data": [
+    {
+      "AccountKey": "ACC-002",
+      "Name": "Saxo Trading Account",
+      "AccountType": "Margin",
+      "Currency": "USD"
+    }
+  ]
+}
