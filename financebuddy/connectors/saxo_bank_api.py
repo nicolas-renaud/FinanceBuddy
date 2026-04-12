@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -14,9 +15,6 @@ from financebuddy.models import (
     PositionPayload,
     RawSnapshot,
 )
-
-
-DEFAULT_CAPTURE_AT = datetime(2026, 4, 12, 8, 15, tzinfo=UTC)
 
 
 class SaxoBankConnector:
@@ -111,12 +109,13 @@ class SaxoBankConnector:
 
         while path is not None:
             payload = self._request_json(path, headers)
+            captured_at = datetime.now(UTC)
             page_accounts = payload.get("Data", [])
             accounts.extend(page_accounts)
             snapshots.append(
                 RawSnapshot(
                     snapshot_name="accounts" if page_index == 1 else f"accounts_page_{page_index}",
-                    captured_at=_collection_captured_at(payload),
+                    captured_at=captured_at,
                     payload=payload,
                 )
             )
@@ -130,8 +129,9 @@ class SaxoBankConnector:
         account_key: str,
         headers: dict[str, str],
     ) -> tuple[dict[str, Any], RawSnapshot]:
-        payload = self._request_json(f"/port/v1/accounts/{account_key}/balance", headers)
-        captured_at = _collection_captured_at(payload)
+        encoded_account_key = quote(account_key, safe="")
+        payload = self._request_json(f"/port/v1/accounts/{encoded_account_key}/balance", headers)
+        captured_at = datetime.now(UTC)
         return (
             payload["Data"][0],
             RawSnapshot(
@@ -146,7 +146,7 @@ class SaxoBankConnector:
         headers: dict[str, str],
     ) -> tuple[list[dict[str, Any]], RawSnapshot]:
         payload = self._request_json("/port/v1/positions", headers)
-        captured_at = _collection_captured_at(payload)
+        captured_at = datetime.now(UTC)
         return (
             payload.get("Data", []),
             RawSnapshot(
@@ -178,27 +178,13 @@ class _CollectionResult:
         self.snapshots = snapshots
 
 
-def _collection_captured_at(payload: dict[str, Any]) -> datetime:
-    candidates: list[datetime] = []
-    for item in payload.get("Data", []):
-        last_updated = item.get("LastUpdated")
-        if last_updated:
-            candidates.append(_parse_datetime(last_updated))
-
-    if candidates:
-        return max(candidates)
-
-    return DEFAULT_CAPTURE_AT
-
-
 def _parse_datetime(value: str | None, fallback: datetime | None = None) -> datetime:
     if value:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
     if fallback is not None:
         return fallback
-
-    return DEFAULT_CAPTURE_AT
+    return datetime.now(UTC)
 
 
 def _normalize_account_type(raw_account_type: str) -> str:

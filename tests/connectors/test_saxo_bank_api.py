@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from financebuddy.connectors.base import AccessProfile, RuntimeCredentials
+from financebuddy.connectors import saxo_bank_api as saxo_module
 from financebuddy.connectors.saxo_bank_api import SaxoBankConnector
 
 
@@ -48,6 +49,12 @@ def build_credentials(token: str | None = "token-123") -> RuntimeCredentials:
 def build_connector(responses: dict[tuple[str, str], httpx.Response]) -> SaxoBankConnector:
     client = httpx.Client(transport=httpx.MockTransport(DummyTransport(responses)))
     return SaxoBankConnector(client=client)
+
+
+class FrozenDateTime(datetime):
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        return datetime(2026, 4, 12, 9, 30, tzinfo=tz or UTC)
 
 
 def test_connector_maps_recorded_fixture_payloads() -> None:
@@ -107,9 +114,10 @@ def test_connector_maps_recorded_fixture_payloads() -> None:
     assert result.snapshots[0].snapshot_name == "accounts"
 
 
-def test_position_timestamp_falls_back_to_capture_time() -> None:
+def test_position_timestamp_falls_back_to_capture_time(monkeypatch: pytest.MonkeyPatch) -> None:
     positions = load_fixture("positions.json")
     positions["Data"][0].pop("LastUpdated", None)
+    monkeypatch.setattr(saxo_module, "datetime", FrozenDateTime)
 
     connector = build_connector(
         {
@@ -143,7 +151,45 @@ def test_position_timestamp_falls_back_to_capture_time() -> None:
 
     result = connector.fetch(build_profile(), build_credentials())
 
-    assert result.positions[0].observed_at == datetime(2026, 4, 12, 8, 15, tzinfo=UTC)
+    assert result.positions[0].observed_at == datetime(2026, 4, 12, 9, 30, tzinfo=UTC)
+    assert result.snapshots[-1].captured_at == datetime(2026, 4, 12, 9, 30, tzinfo=UTC)
+
+
+def test_balance_timestamp_falls_back_to_response_capture_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(saxo_module, "datetime", FrozenDateTime)
+
+    connector = build_connector(
+        {
+            ("GET", "/port/v1/accounts"): httpx.Response(
+                200,
+                json={"Data": [{"AccountKey": "ACC-001", "Name": "Primary", "AccountType": "Margin", "Currency": "EUR"}]},
+                headers={"content-type": "application/json"},
+            ),
+            ("GET", "/port/v1/accounts/ACC-001/balance"): httpx.Response(
+                200,
+                json={
+                    "AccountKey": "ACC-001",
+                    "Data": [
+                        {
+                            "CashBalance": "1250.50",
+                            "Currency": "EUR",
+                        }
+                    ],
+                },
+                headers={"content-type": "application/json"},
+            ),
+            ("GET", "/port/v1/positions"): httpx.Response(
+                200,
+                json={"Data": []},
+                headers={"content-type": "application/json"},
+            ),
+        }
+    )
+
+    result = connector.fetch(build_profile(), build_credentials())
+
+    assert result.balances[0].observed_at == datetime(2026, 4, 12, 9, 30, tzinfo=UTC)
+    assert result.snapshots[1].captured_at == datetime(2026, 4, 12, 9, 30, tzinfo=UTC)
 
 
 def test_fetch_requires_access_token() -> None:
@@ -168,15 +214,15 @@ def test_missing_account_key_raises() -> None:
         connector.fetch(build_profile(), build_credentials())
 
 
-def test_balance_snapshot_name_is_sanitized() -> None:
-    connector = build_connector(
+def test_balance_request_encodes_account_key_path_segment() -> None:
+    transport = DummyTransport(
         {
             ("GET", "/port/v1/accounts"): httpx.Response(
                 200,
                 json={"Data": [{"AccountKey": "ACC/003", "Name": "Unsafe", "AccountType": "Margin", "Currency": "EUR"}]},
                 headers={"content-type": "application/json"},
             ),
-            ("GET", "/port/v1/accounts/ACC/003/balance"): httpx.Response(
+            ("GET", "/port/v1/accounts/ACC%2F003/balance"): httpx.Response(
                 200,
                 json={
                     "AccountKey": "ACC/003",
@@ -197,8 +243,14 @@ def test_balance_snapshot_name_is_sanitized() -> None:
             ),
         }
     )
+    client = httpx.Client(transport=httpx.MockTransport(transport))
+    connector = SaxoBankConnector(client=client)
 
     result = connector.fetch(build_profile(), build_credentials())
 
+    assert any(
+        request.method == "GET" and request.url.raw_path.decode() == "/port/v1/accounts/ACC%2F003/balance"
+        for request in transport.requests
+    )
     assert result.snapshots[1].snapshot_name == "balance_ACC_003"
     assert "/" not in result.snapshots[1].snapshot_name
