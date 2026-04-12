@@ -10,6 +10,9 @@ def normalize_events(run_id: str, result: ConnectorFetchResult) -> list[dict]:
     events: list[dict] = []
 
     for balance in result.balances:
+        if balance.source_account_id is None:
+            raise ValueError("source_account_id is required for balance events")
+
         events.append(
             {
                 "event_id": str(uuid.uuid4()),
@@ -26,6 +29,9 @@ def normalize_events(run_id: str, result: ConnectorFetchResult) -> list[dict]:
         )
 
     for position in result.positions:
+        if position.source_account_id is None:
+            raise ValueError("source_account_id is required for position events")
+
         events.append(
             {
                 "event_id": str(uuid.uuid4()),

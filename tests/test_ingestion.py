@@ -82,5 +82,32 @@ def test_normalize_events_creates_balance_and_position_events() -> None:
         "balance_observed",
         "position_observed",
     ]
+    assert events[0]["run_id"] == "run-123"
     assert events[0]["canonical_account_key"] == "account:CHK-001"
+    assert events[0]["amount"] == "1250.50"
+    assert events[0]["quantity"] is None
+    assert events[0]["observed_at"] == observed_at.isoformat()
+    assert json.loads(events[0]["payload_json"])["source_account_id"] == "CHK-001"
     assert events[1]["asset_key"] == "asset:VOO"
+    assert events[1]["canonical_account_key"] == "account:BRK-001"
+    assert events[1]["amount"] == "510.10"
+    assert events[1]["quantity"] == "12.5"
+    assert events[1]["observed_at"] == observed_at.isoformat()
+    assert json.loads(events[1]["payload_json"])["asset_symbol"] == "VOO"
+
+
+def test_normalize_events_rejects_missing_source_account_id() -> None:
+    observed_at = datetime(2026, 4, 11, 12, 0, tzinfo=UTC)
+    result = ConnectorFetchResult(
+        balances=[
+            BalancePayload(
+                source_account_id=None,
+                amount="1250.50",
+                currency="EUR",
+                observed_at=observed_at,
+            )
+        ]
+    )
+
+    with pytest.raises(ValueError, match="source_account_id"):
+        normalize_events("run-123", result)
