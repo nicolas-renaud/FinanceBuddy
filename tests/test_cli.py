@@ -13,15 +13,28 @@ def test_cli_shows_help() -> None:
     result = runner.invoke(app, ["--help"])
 
     assert result.exit_code == 0
-    assert "Commands" in result.stdout
     assert "crawl" in result.stdout
 
 
-def test_cli_crawl_executes_placeholder() -> None:
-    result = runner.invoke(app, ["crawl"])
+def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--fixture",
+            "tests/fixtures/demo_bank/accounts.json",
+            "--username",
+            "alice",
+            "--password",
+            "secret",
+        ],
+    )
 
     assert result.exit_code == 0
-    assert "crawl not implemented yet" in result.stdout
+    assert "Main checking" in result.stdout
+    assert "VOO" in result.stdout
 
 
 def test_load_config_uses_default_data_dir() -> None:
