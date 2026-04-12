@@ -17,6 +17,15 @@ def test_cli_shows_help() -> None:
     assert "crawl" in result.stdout
 
 
+def test_crawl_help_mentions_connector_and_saxo_fixture_dir() -> None:
+    result = runner.invoke(app, ["crawl", "--help"])
+
+    assert result.exit_code == 0
+    assert "demo|saxo" in result.stdout
+    assert "tests/fixtures/saxo_bank" in result.stdout
+    assert "Saxo owner slug used to build the access" in result.stdout
+
+
 def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
@@ -41,6 +50,71 @@ def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
         "SELECT profile_id, warnings_json FROM crawl_runs"
     ).fetchone()
     assert row["profile_id"] == "bob-demo-bank"
+    assert row["warnings_json"] == "[]"
+
+
+def test_crawl_command_runs_saxo_connector_with_env_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SAXO_ACCESS_TOKEN", "token-123")
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--fixture-dir",
+            "tests/fixtures/saxo_bank",
+            "--owner",
+            "nico",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Saxo Global Account" in result.stdout
+    assert "NOVO-B" in result.stdout
+    assert (tmp_path / "financebuddy.db").exists()
+    assert any((tmp_path / "snapshots").glob("*/*.json"))
+    row = connect(tmp_path / "financebuddy.db").execute(
+        "SELECT profile_id, connector_id, warnings_json FROM crawl_runs"
+    ).fetchone()
+    assert row["profile_id"] == "nico-saxo-bank-sim"
+    assert row["connector_id"] == "saxo_bank_api"
+    assert row["warnings_json"] == "[]"
+
+
+def test_crawl_command_prompts_for_saxo_access_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--fixture-dir",
+            "tests/fixtures/saxo_bank",
+            "--owner",
+            "nico",
+        ],
+        input="token-123\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Saxo Global Account" in result.stdout
+    assert "NOVO-B" in result.stdout
+    row = connect(tmp_path / "financebuddy.db").execute(
+        "SELECT profile_id, connector_id, warnings_json FROM crawl_runs"
+    ).fetchone()
+    assert row["profile_id"] == "nico-saxo-bank-sim"
+    assert row["connector_id"] == "saxo_bank_api"
     assert row["warnings_json"] == "[]"
 
 

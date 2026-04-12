@@ -31,6 +31,17 @@ def test_runtime_credentials_are_not_persisted() -> None:
     assert "secret" not in repr(credentials)
 
 
+def test_runtime_credentials_support_optional_access_token() -> None:
+    credentials = RuntimeCredentials(
+        username="alice",
+        password="secret",
+        access_token="token-123",
+    )
+
+    assert credentials.access_token == "token-123"
+    assert "token-123" not in repr(credentials)
+
+
 def test_demo_bank_connector_maps_fixture_response() -> None:
     fixture_path = Path("tests/fixtures/demo_bank/accounts.json")
 
