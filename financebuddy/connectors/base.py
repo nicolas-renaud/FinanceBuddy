@@ -18,6 +18,7 @@ class AccessProfile:
 class RuntimeCredentials:
     username: str
     password: str = field(repr=False)
+    access_token: str = field(default="", repr=False)
 
 
 class Connector(Protocol):
