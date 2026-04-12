@@ -17,6 +17,15 @@ def test_cli_shows_help() -> None:
     assert "crawl" in result.stdout
 
 
+def test_crawl_help_mentions_connector_and_saxo_fixture_dir() -> None:
+    result = runner.invoke(app, ["crawl", "--help"])
+
+    assert result.exit_code == 0
+    assert "--connector" in result.stdout
+    assert "--fixture-dir" in result.stdout
+    assert "--owner" in result.stdout
+
+
 def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
