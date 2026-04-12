@@ -1,5 +1,4 @@
-import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from financebuddy.connectors.base import AccessProfile, RuntimeCredentials
@@ -29,6 +28,7 @@ def test_runtime_credentials_are_not_persisted() -> None:
     credentials = RuntimeCredentials(username="alice", password="secret")
 
     assert credentials.password == "secret"
+    assert "secret" not in repr(credentials)
 
 
 def test_demo_bank_connector_maps_fixture_response() -> None:
@@ -49,6 +49,18 @@ def test_demo_bank_connector_maps_fixture_response() -> None:
     assert len(result.balances) == 1
     assert len(result.positions) == 1
     assert result.snapshots[0].snapshot_name == "accounts"
+    assert result.accounts[0].source_account_id == "CHK-001"
+    assert result.accounts[0].display_name == "Main checking"
+    assert result.accounts[0].currency == "EUR"
+    assert result.balances[0].source_account_id == "CHK-001"
+    assert result.balances[0].amount == "1250.50"
+    assert result.balances[0].observed_at == datetime(2026, 4, 11, 12, 0, tzinfo=UTC)
+    assert result.positions[0].source_account_id == "BRK-001"
+    assert result.positions[0].asset_symbol == "VOO"
+    assert result.positions[0].quantity == "12.5"
+    assert result.positions[0].unit_price == "510.10"
+    assert result.positions[0].currency == "USD"
+    assert result.snapshots[0].payload["accounts"][1]["id"] == "BRK-001"
 
 
 def test_connector_models_support_default_and_explicit_construction() -> None:
