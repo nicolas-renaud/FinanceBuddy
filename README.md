@@ -5,7 +5,7 @@ Local-first finance crawler and portfolio tracker.
 ## Setup
 
 ```bash
-uv sync
+uv sync --extra dev
 ```
 
 ## Run Demo Crawl
