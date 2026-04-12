@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -51,7 +52,7 @@ class SaxoBankConnector:
                 AccountPayload(
                     source_account_id=source_account_id,
                     display_name=account["Name"],
-                    account_type=account["AccountType"],
+                    account_type=_normalize_account_type(account["AccountType"]),
                     currency=account["Currency"],
                 )
             )
@@ -134,7 +135,7 @@ class SaxoBankConnector:
         return (
             payload["Data"][0],
             RawSnapshot(
-                snapshot_name=f"balance_{account_key}",
+                snapshot_name=f"balance_{_safe_snapshot_segment(account_key)}",
                 captured_at=captured_at,
                 payload=payload,
             ),
@@ -198,3 +199,12 @@ def _parse_datetime(value: str | None, fallback: datetime | None = None) -> date
         return fallback
 
     return DEFAULT_CAPTURE_AT
+
+
+def _normalize_account_type(raw_account_type: str) -> str:
+    return "brokerage"
+
+
+def _safe_snapshot_segment(value: str) -> str:
+    segment = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("._-")
+    return segment or "account"

@@ -93,6 +93,10 @@ def test_connector_maps_recorded_fixture_payloads() -> None:
         "ACC-001",
         "ACC-002",
     ]
+    assert [account.account_type for account in result.accounts] == [
+        "brokerage",
+        "brokerage",
+    ]
     assert [balance.source_account_id for balance in result.balances] == [
         "ACC-001",
         "ACC-002",
@@ -162,3 +166,39 @@ def test_missing_account_key_raises() -> None:
 
     with pytest.raises(KeyError, match="AccountKey"):
         connector.fetch(build_profile(), build_credentials())
+
+
+def test_balance_snapshot_name_is_sanitized() -> None:
+    connector = build_connector(
+        {
+            ("GET", "/port/v1/accounts"): httpx.Response(
+                200,
+                json={"Data": [{"AccountKey": "ACC/003", "Name": "Unsafe", "AccountType": "Margin", "Currency": "EUR"}]},
+                headers={"content-type": "application/json"},
+            ),
+            ("GET", "/port/v1/accounts/ACC/003/balance"): httpx.Response(
+                200,
+                json={
+                    "AccountKey": "ACC/003",
+                    "Data": [
+                        {
+                            "CashBalance": "1.00",
+                            "Currency": "EUR",
+                            "LastUpdated": "2026-04-12T08:10:00Z",
+                        }
+                    ],
+                },
+                headers={"content-type": "application/json"},
+            ),
+            ("GET", "/port/v1/positions"): httpx.Response(
+                200,
+                json={"Data": []},
+                headers={"content-type": "application/json"},
+            ),
+        }
+    )
+
+    result = connector.fetch(build_profile(), build_credentials())
+
+    assert result.snapshots[1].snapshot_name == "balance_ACC_003"
+    assert "/" not in result.snapshots[1].snapshot_name
