@@ -111,7 +111,12 @@ def crawl(
         credentials=credentials,
     )
     typer.echo(
-        render_summary(outcome["accounts"], outcome["balances"], outcome["positions"])
+        render_summary(
+            outcome["accounts"],
+            outcome["balances"],
+            outcome["positions"],
+            base_currency=config.base_currency,
+        )
     )
 
 
