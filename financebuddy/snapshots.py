@@ -16,6 +16,10 @@ def persist_snapshots(
 
     written_paths: list[Path] = []
     for snapshot in snapshots:
+        snapshot_path = Path(snapshot.snapshot_name)
+        if snapshot_path.name != snapshot.snapshot_name or snapshot.snapshot_name in {"", ".", ".."}:
+            raise ValueError("snapshot_name must be a single safe filename segment")
+
         path = run_dir / f"{snapshot.snapshot_name}.json"
         path.write_text(
             json.dumps(snapshot.payload, indent=2, sort_keys=True),
