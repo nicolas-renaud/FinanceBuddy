@@ -155,3 +155,112 @@ def test_run_crawl_rolls_back_events_if_crawl_run_insert_fails(
     assert event_count["count"] == 0
     assert balance_count["count"] == 0
     assert position_count["count"] == 0
+
+
+def test_run_crawl_records_failed_attempt(tmp_path: Path) -> None:
+    class FailingConnector:
+        def fetch(self, profile: AccessProfile, credentials: RuntimeCredentials):
+            raise RuntimeError("fetch failed")
+
+    profile = AccessProfile(
+        profile_id="alice-demo-bank",
+        connector_id="demo_bank_api",
+        institution_slug="demo-bank",
+        owner_slug="alice",
+    )
+    credentials = RuntimeCredentials(username="alice", password="secret")
+
+    try:
+        run_crawl(
+            db_path=tmp_path / "financebuddy.db",
+            snapshot_dir=tmp_path / "snapshots",
+            connector=FailingConnector(),
+            profile=profile,
+            credentials=credentials,
+        )
+    except RuntimeError as exc:
+        assert str(exc) == "fetch failed"
+    else:
+        raise AssertionError("expected RuntimeError")
+
+    connection = connect(tmp_path / "financebuddy.db")
+    row = connection.execute(
+        "SELECT profile_id, connector_id, status, warnings_json, finished_at FROM crawl_runs"
+    ).fetchone()
+
+    assert row["profile_id"] == "alice-demo-bank"
+    assert row["connector_id"] == "demo_bank_api"
+    assert row["status"] == "failed"
+    assert "fetch failed" in row["warnings_json"]
+    assert row["finished_at"] is not None
+
+
+def test_run_crawl_clears_positions_missing_from_later_crawl(tmp_path: Path) -> None:
+    profile = AccessProfile(
+        profile_id="alice-demo-bank",
+        connector_id="demo_bank_api",
+        institution_slug="demo-bank",
+        owner_slug="alice",
+    )
+    credentials = RuntimeCredentials(username="alice", password="secret")
+    first_connector = DemoBankApiConnector(
+        {
+            "captured_at": "2026-04-11T12:00:00Z",
+            "accounts": [
+                {
+                    "id": "BRK-001",
+                    "name": "Broker account",
+                    "type": "brokerage",
+                    "currency": "USD",
+                    "positions": [
+                        {
+                            "symbol": "VOO",
+                            "name": "Vanguard S&P 500 ETF",
+                            "quantity": "12.5",
+                            "unit_price": "510.10",
+                            "currency": "USD",
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+    second_connector = DemoBankApiConnector(
+        {
+            "captured_at": "2026-04-12T12:00:00Z",
+            "accounts": [
+                {
+                    "id": "BRK-001",
+                    "name": "Broker account",
+                    "type": "brokerage",
+                    "currency": "USD",
+                    "positions": [],
+                }
+            ],
+        }
+    )
+
+    db_path = tmp_path / "financebuddy.db"
+    snapshot_dir = tmp_path / "snapshots"
+    run_crawl(
+        db_path=db_path,
+        snapshot_dir=snapshot_dir,
+        connector=first_connector,
+        profile=profile,
+        credentials=credentials,
+    )
+    run_crawl(
+        db_path=db_path,
+        snapshot_dir=snapshot_dir,
+        connector=second_connector,
+        profile=profile,
+        credentials=credentials,
+    )
+
+    connection = connect(db_path)
+    rows = connection.execute(
+        "SELECT asset_key FROM current_positions WHERE canonical_account_key = ?",
+        ("account:BRK-001",),
+    ).fetchall()
+
+    assert rows == []

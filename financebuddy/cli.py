@@ -24,16 +24,19 @@ def crawl(
     data_dir: Path = typer.Option(..., exists=False),
     fixture: Path = typer.Option(..., exists=True, dir_okay=False),
     username: str = typer.Option(...),
-    password: str = typer.Option(..., hide_input=True),
+    password: str | None = typer.Option(None, hide_input=True),
 ) -> None:
     """Run a crawl for a configured access profile."""
+    if password is None:
+        password = typer.prompt("Password", hide_input=True)
+
     config = load_config(data_dir)
     connector = DemoBankApiConnector.from_fixture_path(fixture)
     profile = AccessProfile(
-        profile_id="alice-demo-bank",
+        profile_id=f"{username}-demo-bank",
         connector_id="demo_bank_api",
         institution_slug="demo-bank",
-        owner_slug="alice",
+        owner_slug=username,
     )
     credentials = RuntimeCredentials(username=username, password=password)
 

@@ -50,6 +50,7 @@ def _apply_events(connection: sqlite3.Connection, events: list[dict]) -> None:
                     amount = excluded.amount,
                     currency = excluded.currency,
                     observed_at = excluded.observed_at
+                WHERE excluded.observed_at >= current_balances.observed_at
                 """,
                 (
                     event["canonical_account_key"],
@@ -74,6 +75,7 @@ def _apply_events(connection: sqlite3.Connection, events: list[dict]) -> None:
                     unit_price = excluded.unit_price,
                     currency = excluded.currency,
                     observed_at = excluded.observed_at
+                WHERE excluded.observed_at >= current_positions.observed_at
                 """,
                 (
                     event["canonical_account_key"],
@@ -99,3 +101,56 @@ def apply_events(
 
     with transaction(db_path) as managed_connection:
         _apply_events(managed_connection, events)
+
+
+def reconcile_current_positions(
+    db_path: Path,
+    observed_accounts: dict[str, str],
+    observed_position_keys: dict[str, set[str]],
+    observed_at_by_account: dict[str, str],
+    connection: sqlite3.Connection | None = None,
+) -> None:
+    def _reconcile(active_connection: sqlite3.Connection) -> None:
+        for canonical_account_key, account_type in observed_accounts.items():
+            if account_type != "brokerage":
+                continue
+
+            observed_at = observed_at_by_account.get(canonical_account_key)
+            if observed_at is None:
+                continue
+
+            asset_keys = observed_position_keys.get(canonical_account_key, set())
+            if asset_keys:
+                placeholders = ", ".join("?" for _ in asset_keys)
+                active_connection.execute(
+                    f"""
+                    DELETE FROM current_positions
+                    WHERE canonical_account_key = ?
+                      AND observed_at <= ?
+                      AND asset_key NOT IN ({placeholders})
+                    """,
+                    (
+                        canonical_account_key,
+                        observed_at,
+                        *sorted(asset_keys),
+                    ),
+                )
+            else:
+                active_connection.execute(
+                    """
+                    DELETE FROM current_positions
+                    WHERE canonical_account_key = ?
+                      AND observed_at <= ?
+                    """,
+                    (
+                        canonical_account_key,
+                        observed_at,
+                    ),
+                )
+
+    if connection is not None:
+        _reconcile(connection)
+        return
+
+    with transaction(db_path) as managed_connection:
+        _reconcile(managed_connection)

@@ -14,8 +14,7 @@ uv sync --extra dev
 uv run financebuddy crawl \
   --data-dir ./data \
   --fixture tests/fixtures/demo_bank/accounts.json \
-  --username alice \
-  --password secret
+  --username alice
 ```
 
 ## Run Tests

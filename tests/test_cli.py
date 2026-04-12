@@ -4,6 +4,7 @@ from typer.testing import CliRunner
 
 from financebuddy.cli import app
 from financebuddy.config import load_config
+from financebuddy.db import connect
 
 
 runner = CliRunner()
@@ -26,10 +27,9 @@ def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
             "--fixture",
             "tests/fixtures/demo_bank/accounts.json",
             "--username",
-            "alice",
-            "--password",
-            "secret",
+            "bob",
         ],
+        input="secret\n",
     )
 
     assert result.exit_code == 0
@@ -37,6 +37,11 @@ def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
     assert "VOO" in result.stdout
     assert (tmp_path / "financebuddy.db").exists()
     assert any((tmp_path / "snapshots").glob("*/*.json"))
+    row = connect(tmp_path / "financebuddy.db").execute(
+        "SELECT profile_id, warnings_json FROM crawl_runs"
+    ).fetchone()
+    assert row["profile_id"] == "bob-demo-bank"
+    assert row["warnings_json"] == "[]"
 
 
 def test_load_config_uses_default_data_dir() -> None:

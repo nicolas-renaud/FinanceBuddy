@@ -154,3 +154,82 @@ def test_apply_events_rejects_unknown_event_type(tmp_path: Path) -> None:
         assert "unknown_observed" in str(exc)
     else:
         raise AssertionError("expected ValueError for unsupported event_type")
+
+
+def test_apply_events_does_not_regress_current_state_with_older_events(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "financebuddy.db"
+    initialize_database(db_path)
+
+    newer_events = [
+        {
+            "event_id": "evt-new-balance",
+            "run_id": "run-new",
+            "event_type": "balance_observed",
+            "canonical_account_key": "account:CHK-001",
+            "asset_key": None,
+            "amount": "1300.00",
+            "quantity": None,
+            "currency": "EUR",
+            "observed_at": "2026-04-12T12:00:00+00:00",
+            "payload_json": "{}",
+        },
+        {
+            "event_id": "evt-new-position",
+            "run_id": "run-new",
+            "event_type": "position_observed",
+            "canonical_account_key": "account:BRK-001",
+            "asset_key": "asset:VOO",
+            "amount": "515.00",
+            "quantity": "13.0",
+            "currency": "USD",
+            "observed_at": "2026-04-12T12:00:00+00:00",
+            "payload_json": "{}",
+        },
+    ]
+    older_events = [
+        {
+            "event_id": "evt-old-balance",
+            "run_id": "run-old",
+            "event_type": "balance_observed",
+            "canonical_account_key": "account:CHK-001",
+            "asset_key": None,
+            "amount": "1200.00",
+            "quantity": None,
+            "currency": "EUR",
+            "observed_at": "2026-04-11T12:00:00+00:00",
+            "payload_json": "{}",
+        },
+        {
+            "event_id": "evt-old-position",
+            "run_id": "run-old",
+            "event_type": "position_observed",
+            "canonical_account_key": "account:BRK-001",
+            "asset_key": "asset:VOO",
+            "amount": "500.00",
+            "quantity": "12.0",
+            "currency": "USD",
+            "observed_at": "2026-04-11T12:00:00+00:00",
+            "payload_json": "{}",
+        },
+    ]
+
+    apply_events(db_path, newer_events)
+    apply_events(db_path, older_events)
+
+    connection = connect(db_path)
+    balance = connection.execute(
+        "SELECT amount, observed_at FROM current_balances WHERE canonical_account_key = ?",
+        ("account:CHK-001",),
+    ).fetchone()
+    position = connection.execute(
+        "SELECT quantity, unit_price, observed_at FROM current_positions WHERE canonical_account_key = ? AND asset_key = ?",
+        ("account:BRK-001", "asset:VOO"),
+    ).fetchone()
+
+    assert balance["amount"] == "1300.00"
+    assert balance["observed_at"] == "2026-04-12T12:00:00+00:00"
+    assert position["quantity"] == "13.0"
+    assert position["unit_price"] == "515.00"
+    assert position["observed_at"] == "2026-04-12T12:00:00+00:00"
