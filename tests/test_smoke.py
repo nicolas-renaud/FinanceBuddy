@@ -41,7 +41,17 @@ def test_smoke_runs_saxo_fixture_crawl(
 
     assert result.exit_code == 0
     assert "Saxo Global Account" in result.stdout
-    assert "Position: NOVO-B qty=12.5 price=987.40 DKK" in result.stdout
+    assert "`-- Total: 6674.93 EUR" in result.stdout
+    assert "    |-- Cash: 1250.50 EUR" in result.stdout
+    assert "    `-- Invested: 5424.43 EUR" in result.stdout
+    assert (
+        "        |-- Position: NOVO-B qty=12.5 price=987.40 DKK value=12342.50 DKK (1653.90 EUR)"
+        in result.stdout
+    )
+    assert (
+        "        `-- Position: CSPX qty=8 price=512.30 USD value=4098.40 USD (3770.53 EUR)"
+        in result.stdout
+    )
     assert (tmp_path / "financebuddy.db").exists()
 
     snapshot_files = sorted((tmp_path / "snapshots").glob("*/*.json"))
