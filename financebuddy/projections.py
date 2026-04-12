@@ -84,3 +84,7 @@ def apply_events(db_path: Path, events: list[dict]) -> None:
                         event["observed_at"],
                     ),
                 )
+            else:
+                raise ValueError(
+                    f"Unsupported event_type for projection: {event['event_type']}"
+                )
