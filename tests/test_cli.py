@@ -21,9 +21,9 @@ def test_crawl_help_mentions_connector_and_saxo_fixture_dir() -> None:
     result = runner.invoke(app, ["crawl", "--help"])
 
     assert result.exit_code == 0
-    assert "--connector" in result.stdout
-    assert "--fixture-dir" in result.stdout
-    assert "--owner" in result.stdout
+    assert "demo|saxo" in result.stdout
+    assert "tests/fixtures/saxo_bank" in result.stdout
+    assert "Saxo owner slug used to build the access" in result.stdout
 
 
 def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:

@@ -27,14 +27,38 @@ def main() -> None:
 @app.command()
 def crawl(
     data_dir: Path = typer.Option(..., exists=False),
-    connector: str = typer.Option("demo", "--connector"),
-    fixture: Path | None = typer.Option(None, exists=True, dir_okay=False),
-    fixture_dir: Path | None = typer.Option(None, exists=True, file_okay=False),
-    username: str | None = typer.Option(None),
-    owner: str | None = typer.Option(None),
-    password: str | None = typer.Option(None, hide_input=True),
+    connector: str = typer.Option(
+        "demo",
+        "--connector",
+        help="Connector to run: demo|saxo.",
+    ),
+    fixture: Path | None = typer.Option(
+        None,
+        exists=True,
+        dir_okay=False,
+        help="Demo fixture JSON for --connector demo.",
+    ),
+    fixture_dir: Path | None = typer.Option(
+        None,
+        exists=True,
+        file_okay=False,
+        help="Saxo fixture directory, e.g. tests/fixtures/saxo_bank.",
+    ),
+    username: str | None = typer.Option(
+        None,
+        help="Demo username used to build the access profile owner.",
+    ),
+    owner: str | None = typer.Option(
+        None,
+        help="Saxo owner slug used to build the access profile.",
+    ),
+    password: str | None = typer.Option(
+        None,
+        hide_input=True,
+        help="Demo password; prompted interactively if omitted.",
+    ),
 ) -> None:
-    """Run a crawl for a configured access profile."""
+    """Run a crawl for a demo or Saxo access profile."""
     config = load_config(data_dir)
     if connector == "demo":
         if fixture is None:
