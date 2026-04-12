@@ -27,11 +27,11 @@ def run_crawl(
     result = connector.fetch(profile, credentials)
     snapshot_paths = persist_snapshots(snapshot_dir, run_id, result.snapshots)
     events = normalize_events(run_id, result)
-    apply_events(db_path, events)
     status = "partial_success" if result.warnings else "success"
     finished_at = datetime.now(UTC)
 
     with transaction(db_path) as connection:
+        apply_events(db_path, events, connection=connection)
         connection.execute(
             """
             INSERT INTO crawl_runs (
