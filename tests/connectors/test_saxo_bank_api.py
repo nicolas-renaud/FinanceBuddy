@@ -21,7 +21,7 @@ class DummyTransport:
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
-        key = (request.method, request.url.path)
+        key = (request.method, request.url.raw_path.decode())
         response = self.responses.get(key)
         if response is None:
             raise AssertionError(f"unexpected request: {request.method} {request.url}")
