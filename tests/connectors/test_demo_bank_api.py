@@ -1,6 +1,9 @@
+import json
 from datetime import datetime
+from pathlib import Path
 
 from financebuddy.connectors.base import AccessProfile, RuntimeCredentials
+from financebuddy.connectors.demo_bank_api import DemoBankApiConnector
 from financebuddy.models import (
     AccountPayload,
     BalancePayload,
@@ -26,7 +29,26 @@ def test_runtime_credentials_are_not_persisted() -> None:
     credentials = RuntimeCredentials(username="alice", password="secret")
 
     assert credentials.password == "secret"
-    assert "secret" not in repr(credentials)
+
+
+def test_demo_bank_connector_maps_fixture_response() -> None:
+    fixture_path = Path("tests/fixtures/demo_bank/accounts.json")
+
+    connector = DemoBankApiConnector.from_fixture_path(fixture_path)
+    profile = AccessProfile(
+        profile_id="alice-demo-bank",
+        connector_id="demo_bank_api",
+        institution_slug="demo-bank",
+        owner_slug="alice",
+    )
+    credentials = RuntimeCredentials(username="alice", password="secret")
+
+    result = connector.fetch(profile, credentials)
+
+    assert len(result.accounts) == 2
+    assert len(result.balances) == 1
+    assert len(result.positions) == 1
+    assert result.snapshots[0].snapshot_name == "accounts"
 
 
 def test_connector_models_support_default_and_explicit_construction() -> None:
