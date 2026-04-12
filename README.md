@@ -2,9 +2,24 @@
 
 Local-first finance crawler and portfolio tracker.
 
-## Planned First Milestone
+## Setup
 
-- Manual CLI crawl
-- One API-backed institution connector
-- SQLite event log
-- Raw JSON snapshots
+```bash
+uv sync
+```
+
+## Run Demo Crawl
+
+```bash
+uv run financebuddy crawl \
+  --data-dir ./data \
+  --fixture tests/fixtures/demo_bank/accounts.json \
+  --username alice \
+  --password secret
+```
+
+## Run Tests
+
+```bash
+uv run pytest -v
+```
