@@ -35,6 +35,8 @@ def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Main checking" in result.stdout
     assert "VOO" in result.stdout
+    assert (tmp_path / "financebuddy.db").exists()
+    assert any((tmp_path / "snapshots").glob("*/*.json"))
 
 
 def test_load_config_uses_default_data_dir() -> None:
