@@ -131,4 +131,5 @@ def _quantize(amount: Decimal) -> Decimal:
 
 
 def _format_decimal(amount: Decimal) -> str:
-    return f"{_quantize(amount)}"
+    normalized = f"{_quantize(amount):,.2f}"
+    return normalized.replace(",", "_").replace(".", ",").replace("_", ".")

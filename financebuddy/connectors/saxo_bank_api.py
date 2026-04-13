@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlparse
 
 import httpx
 
@@ -42,54 +42,127 @@ class SaxoBankConnector:
         positions: list[PositionPayload] = []
         snapshots: list[RawSnapshot] = []
 
-        account_pages = self._fetch_account_pages(headers)
-        snapshots.extend(account_pages.snapshots)
-        for account in account_pages.accounts:
-            source_account_id = account["AccountKey"]
-            accounts.append(
-                AccountPayload(
-                    source_account_id=source_account_id,
-                    display_name=account["Name"],
-                    account_type=_normalize_account_type(account["AccountType"]),
-                    currency=account["Currency"],
-                )
-            )
-
-            balance_payload, balance_snapshot = self._fetch_balance(
-                source_account_id,
+        if self._uses_sim_me_endpoints():
+            account_pages = self._fetch_collection_pages(
+                "/port/v1/accounts/me",
                 headers,
+                "accounts",
             )
-            snapshots.append(balance_snapshot)
-            balances.append(
-                BalancePayload(
-                    source_account_id=source_account_id,
-                    amount=balance_payload["CashBalance"],
-                    currency=balance_payload["Currency"],
-                    observed_at=_parse_datetime(
-                        balance_payload.get("LastUpdated"),
-                        fallback=balance_snapshot.captured_at,
-                    ),
-                )
-            )
+            snapshots.extend(page.snapshot for page in account_pages)
+            account_keys: list[str] = []
+            for page in account_pages:
+                for account in page.items:
+                    source_account_id = account["AccountKey"]
+                    account_keys.append(source_account_id)
+                    accounts.append(
+                        AccountPayload(
+                            source_account_id=source_account_id,
+                            display_name=_account_display_name(account),
+                            account_type=_normalize_account_type(account["AccountType"]),
+                            currency=account["Currency"],
+                        )
+                    )
 
-        positions_payload, positions_snapshot = self._fetch_positions(headers)
-        snapshots.append(positions_snapshot)
-        for position in positions_payload:
-            observed_at = _parse_datetime(
-                position.get("LastUpdated"),
-                fallback=positions_snapshot.captured_at,
-            )
-            positions.append(
-                PositionPayload(
-                    source_account_id=position["AccountKey"],
-                    asset_symbol=position["Symbol"],
-                    asset_name=position["Description"],
-                    quantity=position["Quantity"],
-                    unit_price=position.get("Price"),
-                    currency=position["Currency"],
-                    observed_at=observed_at,
+            for account_key in account_keys:
+                account = next(
+                    item
+                    for page in account_pages
+                    for item in page.items
+                    if item["AccountKey"] == account_key
                 )
+                balance_payload, balance_snapshot = self._fetch_balance_for_account(
+                    account_key,
+                    account.get("ClientKey"),
+                    headers,
+                )
+                snapshots.append(balance_snapshot)
+                balances.append(
+                    BalancePayload(
+                        source_account_id=account_key,
+                        amount=str(balance_payload["CashBalance"]),
+                        currency=balance_payload["Currency"],
+                        observed_at=_parse_datetime(
+                            balance_payload.get("LastUpdated"),
+                            fallback=balance_snapshot.captured_at,
+                        ),
+                    )
+                )
+
+            positions_pages = self._fetch_collection_pages(
+                "/port/v1/positions/me",
+                headers,
+                "positions",
             )
+            snapshots.extend(page.snapshot for page in positions_pages)
+            for page in positions_pages:
+                for position in page.items:
+                    position_base = position.get("PositionBase", {})
+                    position_view = position.get("PositionView", {})
+                    display = position.get("DisplayAndFormat", {})
+                    observed_at = _parse_datetime(
+                        position_base.get("ExecutionTimeOpen"),
+                        fallback=page.snapshot.captured_at,
+                    )
+                    positions.append(
+                        PositionPayload(
+                            source_account_id=position_base["AccountKey"],
+                            asset_symbol=_position_symbol(position),
+                            asset_name=display.get("Description", _position_symbol(position)),
+                            quantity=str(position_base["Amount"]),
+                            unit_price=_optional_string(position_view.get("CurrentPrice")),
+                            currency=_position_currency(position),
+                            observed_at=observed_at,
+                        )
+                    )
+        else:
+            account_pages = self._fetch_account_pages(headers)
+            snapshots.extend(account_pages.snapshots)
+            for account in account_pages.accounts:
+                source_account_id = account["AccountKey"]
+                accounts.append(
+                    AccountPayload(
+                        source_account_id=source_account_id,
+                        display_name=_account_display_name(account),
+                        account_type=_normalize_account_type(account["AccountType"]),
+                        currency=account["Currency"],
+                    )
+                )
+
+                balance_payload, balance_snapshot = self._fetch_balance(
+                    source_account_id,
+                    headers,
+                )
+                snapshots.append(balance_snapshot)
+                balances.append(
+                    BalancePayload(
+                        source_account_id=source_account_id,
+                        amount=balance_payload["CashBalance"],
+                        currency=balance_payload["Currency"],
+                        observed_at=_parse_datetime(
+                            balance_payload.get("LastUpdated"),
+                            fallback=balance_snapshot.captured_at,
+                        ),
+                    )
+                )
+
+            positions_payload, positions_snapshot = self._fetch_positions(headers)
+            snapshots.append(positions_snapshot)
+            for position in positions_payload:
+                observed_at = _parse_datetime(
+                    position.get("LastUpdated"),
+                    fallback=positions_snapshot.captured_at,
+                )
+                positions.append(
+                    PositionPayload(
+                        source_account_id=position["AccountKey"],
+                        asset_symbol=position["Symbol"],
+                        asset_name=position["Description"],
+                        quantity=position["Quantity"],
+                        unit_price=position.get("Price"),
+                        currency=position["Currency"],
+                        observed_at=observed_at,
+                    )
+                )
 
         return ConnectorFetchResult(
             accounts=accounts,
@@ -156,6 +229,57 @@ class SaxoBankConnector:
             ),
         )
 
+    def _fetch_balance_for_account(
+        self,
+        account_key: str,
+        client_key: str | None,
+        headers: dict[str, str],
+    ) -> tuple[dict[str, Any], RawSnapshot]:
+        query_params = {"AccountKey": account_key}
+        if client_key:
+            query_params["ClientKey"] = client_key
+        payload = self._request_json(
+            f"/port/v1/balances?{urlencode(query_params)}",
+            headers,
+        )
+        captured_at = datetime.now(UTC)
+        return (
+            payload,
+            RawSnapshot(
+                snapshot_name=f"balance_{_safe_snapshot_segment(account_key)}",
+                captured_at=captured_at,
+                payload=payload,
+            ),
+        )
+
+    def _fetch_collection_pages(
+        self,
+        path: str,
+        headers: dict[str, str],
+        snapshot_prefix: str,
+    ) -> list["_CollectionPage"]:
+        pages: list[_CollectionPage] = []
+        next_path: str | None = path
+        page_index = 1
+
+        while next_path is not None:
+            payload = self._request_json(next_path, headers)
+            captured_at = datetime.now(UTC)
+            pages.append(
+                _CollectionPage(
+                    items=payload.get("Data", []),
+                    snapshot=RawSnapshot(
+                        snapshot_name=snapshot_prefix if page_index == 1 else f"{snapshot_prefix}_page_{page_index}",
+                        captured_at=captured_at,
+                        payload=payload,
+                    ),
+                )
+            )
+            next_path = self._normalize_next_path(payload.get("__next"))
+            page_index += 1
+
+        return pages
+
     def _request_json(
         self,
         path: str,
@@ -171,11 +295,34 @@ class SaxoBankConnector:
             return path
         return f"{self._base_url}/{path.lstrip('/')}"
 
+    def _uses_sim_me_endpoints(self) -> bool:
+        parsed = urlparse(self._base_url)
+        return (
+            parsed.scheme == "https"
+            and parsed.netloc == "gateway.saxobank.com"
+            and parsed.path == "/sim/openapi"
+        )
+
+    def _normalize_next_path(self, next_path: str | None) -> str | None:
+        if next_path is None:
+            return None
+
+        base_path = urlparse(self._base_url).path.rstrip("/")
+        if base_path and next_path.startswith(f"{base_path}/"):
+            return next_path[len(base_path) :]
+        return next_path
+
 
 class _CollectionResult:
     def __init__(self, accounts: list[dict[str, Any]], snapshots: list[RawSnapshot]) -> None:
         self.accounts = accounts
         self.snapshots = snapshots
+
+
+class _CollectionPage:
+    def __init__(self, items: list[dict[str, Any]], snapshot: RawSnapshot) -> None:
+        self.items = items
+        self.snapshot = snapshot
 
 
 def _parse_datetime(value: str | None, fallback: datetime | None = None) -> datetime:
@@ -189,6 +336,44 @@ def _parse_datetime(value: str | None, fallback: datetime | None = None) -> date
 
 def _normalize_account_type(raw_account_type: str) -> str:
     return "brokerage"
+
+
+def _account_display_name(account: dict[str, Any]) -> str:
+    return (
+        account.get("DisplayName")
+        or account.get("Name")
+        or account.get("AccountId")
+        or account["AccountKey"]
+    )
+
+
+def _position_symbol(position: dict[str, Any]) -> str:
+    display = position.get("DisplayAndFormat", {})
+    position_base = position.get("PositionBase", {})
+    return (
+        display.get("Symbol")
+        or display.get("Description")
+        or _optional_string(position_base.get("Uic"))
+        or position.get("PositionId")
+        or "unknown"
+    )
+
+
+def _position_currency(position: dict[str, Any]) -> str:
+    display = position.get("DisplayAndFormat", {})
+    position_view = position.get("PositionView", {})
+    return (
+        display.get("Currency")
+        or position_view.get("ExposureCurrency")
+        or position_view.get("ProfitLossCurrency")
+        or "EUR"
+    )
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _safe_snapshot_segment(value: str) -> str:

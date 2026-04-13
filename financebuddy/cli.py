@@ -44,6 +44,11 @@ def crawl(
         file_okay=False,
         help="Saxo fixture directory, e.g. tests/fixtures/saxo_bank.",
     ),
+    saxo_source: str = typer.Option(
+        "fixture",
+        "--saxo-source",
+        help="Saxo source to use: fixture|sim.",
+    ),
     username: str | None = typer.Option(
         None,
         help="Demo username used to build the access profile owner.",
@@ -60,6 +65,9 @@ def crawl(
 ) -> None:
     """Run a crawl for a demo or Saxo access profile."""
     config = load_config(data_dir)
+    if saxo_source not in {"fixture", "sim"}:
+        raise typer.BadParameter("--saxo-source must be fixture or sim")
+
     if connector == "demo":
         if fixture is None:
             raise typer.BadParameter("--fixture is required for the demo connector")
@@ -77,18 +85,22 @@ def crawl(
         )
         credentials = RuntimeCredentials(username=username, password=password)
     elif connector == "saxo":
-        if fixture_dir is None:
-            raise typer.BadParameter(
-                "--fixture-dir is required for the Saxo connector"
-            )
         if owner is None:
             raise typer.BadParameter("--owner is required for the Saxo connector")
+
+        if saxo_source == "fixture":
+            if fixture_dir is None:
+                raise typer.BadParameter(
+                    "--fixture-dir is required for Saxo fixture mode"
+                )
+            connector_impl = _build_saxo_connector_from_fixture_dir(fixture_dir)
+        else:
+            connector_impl = _build_saxo_sim_connector()
 
         access_token = os.environ.get("SAXO_ACCESS_TOKEN")
         if not access_token:
             access_token = typer.prompt("Access token", hide_input=True)
 
-        connector_impl = _build_saxo_connector_from_fixture_dir(fixture_dir)
         profile = AccessProfile(
             profile_id=f"{owner}-saxo-bank-sim",
             connector_id="saxo_bank_api",
@@ -130,6 +142,12 @@ def _build_saxo_connector_from_fixture_dir(fixture_dir: Path) -> SaxoBankConnect
         base_url="https://api.saxo.example",
     )
     return SaxoBankConnector(client=client)
+
+
+def _build_saxo_sim_connector() -> SaxoBankConnector:
+    base_url = "https://gateway.saxobank.com/sim/openapi"
+    client = httpx.Client(base_url=base_url)
+    return SaxoBankConnector(client=client, base_url=base_url)
 
 
 def _load_saxo_fixture_responses(fixture_dir: Path) -> dict[str, dict[str, Any]]:
