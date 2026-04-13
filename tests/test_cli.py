@@ -86,6 +86,95 @@ def test_crawl_command_runs_saxo_connector_with_env_token(
     assert row["warnings_json"] == "[]"
 
 
+def test_crawl_command_requires_fixture_dir_before_prompting_for_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+
+    def fail_prompt(*args, **kwargs) -> None:
+        raise AssertionError(
+            "token prompt should not run before fixture-dir validation"
+        )
+
+    monkeypatch.setattr("financebuddy.cli.typer.prompt", fail_prompt)
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "fixture",
+            "--owner",
+            "nico",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--fixture-dir is required for Saxo fixture mode" in result.output
+
+
+def test_crawl_command_runs_saxo_sim_connector_with_env_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SAXO_ACCESS_TOKEN", "token-123")
+    called = {"value": False}
+
+    def fake_build_saxo_sim_connector():
+        called["value"] = True
+        return object()
+
+    monkeypatch.setattr(
+        "financebuddy.cli._build_saxo_sim_connector",
+        fake_build_saxo_sim_connector,
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.run_crawl",
+        lambda **kwargs: {"accounts": [], "balances": [], "positions": [], "warnings": []},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "sim",
+            "--owner",
+            "nico",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert called["value"] is True
+
+
+def test_crawl_command_rejects_unsupported_saxo_source(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "invalid",
+            "--owner",
+            "nico",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "--saxo-source must be fixture or sim" in result.output
+
+
 def test_crawl_command_prompts_for_saxo_access_token(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -24,11 +24,24 @@ uv run financebuddy crawl \
 uv run financebuddy crawl \
   --data-dir ./data \
   --connector saxo \
+  --saxo-source fixture \
   --owner <owner> \
   --fixture-dir tests/fixtures/saxo_bank
 ```
 
-For the Saxo crawl, the CLI uses `SAXO_ACCESS_TOKEN` when it is set. If the
+## Run Saxo SIM Crawl
+
+```bash
+export SAXO_ACCESS_TOKEN=simulation-token
+
+uv run financebuddy crawl \
+  --data-dir ./data \
+  --connector saxo \
+  --saxo-source sim \
+  --owner <owner>
+```
+
+For Saxo crawls, the CLI uses `SAXO_ACCESS_TOKEN` when it is set. If the
 environment variable is missing or empty, the command prompts interactively for
 the access token before running the crawl.
 

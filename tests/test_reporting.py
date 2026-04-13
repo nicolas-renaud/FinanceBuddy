@@ -66,16 +66,16 @@ def test_render_summary_groups_holdings_by_account_in_a_tree_with_base_currency_
     assert summary == "\n".join(
         [
             "Account: Saxo Global Account (brokerage)",
-            "`-- Total: 6674.93 EUR",
-            "    |-- Cash: 1250.50 EUR",
-            "    `-- Invested: 5424.43 EUR",
-            "        |-- Position: NOVO-B qty=12.5 price=987.40 DKK value=12342.50 DKK (1653.90 EUR)",
-            "        `-- Position: CSPX qty=8 price=512.30 USD value=4098.40 USD (3770.53 EUR)",
+            "`-- Total: 6.674,93 EUR",
+            "    |-- Cash: 1.250,50 EUR",
+            "    `-- Invested: 5.424,43 EUR",
+            "        |-- Position: NOVO-B qty=12.5 price=987.40 DKK value=12.342,50 DKK (1.653,90 EUR)",
+            "        `-- Position: CSPX qty=8 price=512.30 USD value=4.098,40 USD (3.770,53 EUR)",
             "",
             "Account: Saxo Trading Account (brokerage)",
-            "`-- Total: 7746.40 EUR",
-            "    |-- Cash: 7746.40 EUR",
-            "    `-- Invested: 0.00 EUR",
+            "`-- Total: 7.746,40 EUR",
+            "    |-- Cash: 7.746,40 EUR",
+            "    `-- Invested: 0,00 EUR",
         ]
     )
 

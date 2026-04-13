@@ -57,6 +57,24 @@ class FrozenDateTime(datetime):
         return datetime(2026, 4, 12, 9, 30, tzinfo=tz or UTC)
 
 
+class SequencedDateTime(datetime):
+    values = [
+        datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        datetime(2026, 4, 12, 9, 1, tzinfo=UTC),
+        datetime(2026, 4, 12, 9, 2, tzinfo=UTC),
+        datetime(2026, 4, 12, 9, 3, tzinfo=UTC),
+        datetime(2026, 4, 12, 9, 4, tzinfo=UTC),
+        datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+    ]
+    index = 0
+
+    @classmethod
+    def now(cls, tz=None):  # type: ignore[override]
+        value = cls.values[cls.index]
+        cls.index += 1
+        return value.astimezone(tz or UTC)
+
+
 def test_connector_maps_recorded_fixture_payloads() -> None:
     accounts_page_1 = load_fixture("accounts_page_1.json")
     accounts_page_2 = load_fixture("accounts_page_2.json")
@@ -112,6 +130,228 @@ def test_connector_maps_recorded_fixture_payloads() -> None:
     assert result.positions[0].asset_symbol == "NOVO-B"
     assert result.positions[0].observed_at == datetime(2026, 4, 12, 8, 15, tzinfo=UTC)
     assert result.snapshots[0].snapshot_name == "accounts"
+
+
+def test_connector_maps_sim_me_payloads() -> None:
+    connector = SaxoBankConnector(
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                DummyTransport(
+                    {
+                        ("GET", "/sim/openapi/port/v1/accounts/me"): httpx.Response(
+                            200,
+                            json={
+                                "Data": [
+                                    {
+                                        "AccountKey": "SIM-001",
+                                        "ClientKey": "CLIENT-001",
+                                        "DisplayName": "SIM Cash Account",
+                                        "AccountType": "Cash",
+                                        "Currency": "EUR",
+                                    }
+                                ]
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                        ("GET", "/sim/openapi/port/v1/balances?AccountKey=SIM-001&ClientKey=CLIENT-001"): httpx.Response(
+                            200,
+                            json={
+                                "AccountKey": "SIM-001",
+                                "CashBalance": "2048.75",
+                                "Currency": "EUR",
+                                "LastUpdated": "2026-04-12T08:20:00Z",
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                        ("GET", "/sim/openapi/port/v1/positions/me"): httpx.Response(
+                            200,
+                            json={
+                                "Data": [
+                                    {
+                                        "DisplayAndFormat": {
+                                            "Symbol": "NOVO-B",
+                                            "Description": "Novo Nordisk B",
+                                            "Currency": "DKK",
+                                        },
+                                        "PositionBase": {
+                                            "AccountKey": "SIM-001",
+                                            "Amount": 3,
+                                            "ExecutionTimeOpen": "2026-04-12T08:25:00Z",
+                                        },
+                                        "PositionView": {
+                                            "CurrentPrice": 987.40,
+                                        },
+                                    }
+                                ]
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                    }
+                )
+            )
+        ),
+        base_url="https://gateway.saxobank.com/sim/openapi",
+    )
+
+    result = connector.fetch(build_profile(), build_credentials())
+
+    assert [account.source_account_id for account in result.accounts] == ["SIM-001"]
+    assert [account.display_name for account in result.accounts] == ["SIM Cash Account"]
+    assert [balance.amount for balance in result.balances] == ["2048.75"]
+    assert [balance.source_account_id for balance in result.balances] == ["SIM-001"]
+    assert [position.source_account_id for position in result.positions] == ["SIM-001"]
+    assert [position.asset_symbol for position in result.positions] == ["NOVO-B"]
+    assert [position.quantity for position in result.positions] == ["3"]
+    assert [position.unit_price for position in result.positions] == ["987.4"]
+    assert [snapshot.snapshot_name for snapshot in result.snapshots] == [
+        "accounts",
+        "balance_SIM-001",
+        "positions",
+    ]
+
+
+def test_connector_follows_sim_me_pagination() -> None:
+    SequencedDateTime.index = 0
+    original_datetime = saxo_module.datetime
+    saxo_module.datetime = SequencedDateTime
+    try:
+        connector = SaxoBankConnector(
+            client=httpx.Client(
+                transport=httpx.MockTransport(
+                    DummyTransport(
+                        {
+                            ("GET", "/sim/openapi/port/v1/accounts/me"): httpx.Response(
+                                200,
+                                json={
+                                "Data": [
+                                    {
+                                        "AccountKey": "SIM-001",
+                                        "ClientKey": "CLIENT-001",
+                                        "DisplayName": "SIM Cash Account",
+                                        "AccountType": "Cash",
+                                        "Currency": "EUR",
+                                    }
+                                ],
+                                "__next": "/sim/openapi/port/v1/accounts/me?page=2",
+                                },
+                                headers={"content-type": "application/json"},
+                            ),
+                            ("GET", "/sim/openapi/port/v1/accounts/me?page=2"): httpx.Response(
+                                200,
+                                json={
+                                "Data": [
+                                    {
+                                        "AccountKey": "SIM-002",
+                                        "ClientKey": "CLIENT-002",
+                                        "DisplayName": "SIM Margin Account",
+                                        "AccountType": "Margin",
+                                        "Currency": "USD",
+                                    }
+                                ]
+                            },
+                                headers={"content-type": "application/json"},
+                            ),
+                            ("GET", "/sim/openapi/port/v1/balances?AccountKey=SIM-001&ClientKey=CLIENT-001"): httpx.Response(
+                                200,
+                                json={
+                                    "AccountKey": "SIM-001",
+                                    "CashBalance": "2048.75",
+                                    "Currency": "EUR",
+                                },
+                                headers={"content-type": "application/json"},
+                            ),
+                            ("GET", "/sim/openapi/port/v1/balances?AccountKey=SIM-002&ClientKey=CLIENT-002"): httpx.Response(
+                                200,
+                                json={
+                                    "AccountKey": "SIM-002",
+                                    "CashBalance": "100.00",
+                                    "Currency": "USD",
+                                    "LastUpdated": "2026-04-12T08:31:00Z",
+                                },
+                                headers={"content-type": "application/json"},
+                            ),
+                            ("GET", "/sim/openapi/port/v1/positions/me"): httpx.Response(
+                                200,
+                                json={
+                                    "Data": [
+                                        {
+                                            "DisplayAndFormat": {
+                                                "Symbol": "NOVO-B",
+                                                "Description": "Novo Nordisk B",
+                                                "Currency": "DKK",
+                                            },
+                                            "PositionBase": {
+                                                "AccountKey": "SIM-001",
+                                                "Amount": 3,
+                                            },
+                                            "PositionView": {
+                                                "CurrentPrice": 987.40,
+                                            },
+                                        }
+                                    ],
+                                    "__next": "/sim/openapi/port/v1/positions/me?page=2",
+                                },
+                                headers={"content-type": "application/json"},
+                            ),
+                            ("GET", "/sim/openapi/port/v1/positions/me?page=2"): httpx.Response(
+                                200,
+                                json={
+                                    "Data": [
+                                        {
+                                            "DisplayAndFormat": {
+                                                "Symbol": "CSPX",
+                                                "Description": "iShares Core S&P 500 UCITS ETF",
+                                                "Currency": "USD",
+                                            },
+                                            "PositionBase": {
+                                                "AccountKey": "SIM-002",
+                                                "Amount": 1,
+                                                "ExecutionTimeOpen": "2026-04-12T08:32:00Z",
+                                            },
+                                            "PositionView": {
+                                                "CurrentPrice": 512.30,
+                                            },
+                                        }
+                                    ]
+                                },
+                                headers={"content-type": "application/json"},
+                            ),
+                        }
+                    )
+                )
+            ),
+            base_url="https://gateway.saxobank.com/sim/openapi",
+        )
+
+        result = connector.fetch(build_profile(), build_credentials())
+    finally:
+        saxo_module.datetime = original_datetime
+
+    assert [account.source_account_id for account in result.accounts] == [
+        "SIM-001",
+        "SIM-002",
+    ]
+    assert [balance.source_account_id for balance in result.balances] == [
+        "SIM-001",
+        "SIM-002",
+    ]
+    assert [balance.amount for balance in result.balances] == ["2048.75", "100.00"]
+    assert [position.source_account_id for position in result.positions] == [
+        "SIM-001",
+        "SIM-002",
+    ]
+    assert result.balances[0].observed_at == datetime(2026, 4, 12, 9, 2, tzinfo=UTC)
+    assert result.positions[0].observed_at == datetime(2026, 4, 12, 9, 4, tzinfo=UTC)
+    assert result.balances[1].observed_at == datetime(2026, 4, 12, 8, 31, tzinfo=UTC)
+    assert result.positions[1].observed_at == datetime(2026, 4, 12, 8, 32, tzinfo=UTC)
+    assert [snapshot.snapshot_name for snapshot in result.snapshots] == [
+        "accounts",
+        "accounts_page_2",
+        "balance_SIM-001",
+        "balance_SIM-002",
+        "positions",
+        "positions_page_2",
+    ]
 
 
 def test_position_timestamp_falls_back_to_capture_time(monkeypatch: pytest.MonkeyPatch) -> None:
