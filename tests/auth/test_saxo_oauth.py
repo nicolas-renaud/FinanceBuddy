@@ -267,6 +267,8 @@ def test_client_close_closes_owned_http_client():
 
     client.close()
 
+    assert client._http_client.is_closed is True
+
 
 def test_client_close_does_not_close_injected_http_client():
     http_client = httpx.Client()
@@ -278,6 +280,7 @@ def test_client_close_does_not_close_injected_http_client():
 
     client.close()
 
+    assert client._http_client.is_closed is False
     assert http_client.is_closed is False
     http_client.close()
 
