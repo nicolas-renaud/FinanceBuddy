@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from financebuddy.auth.token_store import FileTokenStore, TokenSet
+
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="POSIX permissions are local-only",
+)
 
 
 def build_token_set() -> TokenSet:
@@ -47,10 +56,21 @@ def test_file_token_store_writes_restrictive_permissions(tmp_path):
 
     secrets_dir = tmp_path / "secrets"
     saxo_dir = tmp_path / "secrets" / "saxo"
-    token_path = tmp_path / "secrets" / "saxo" / "nico-saxo-bank-sim.json"
+    token_path = store._path_for_profile("nico-saxo-bank-sim")
     assert stat.S_IMODE(secrets_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE(saxo_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
+
+
+def test_file_token_store_save_is_atomic_and_leaves_no_temp_files(tmp_path):
+    store = FileTokenStore(tmp_path)
+
+    store.save("nico-saxo-bank-sim", build_token_set())
+
+    saxo_dir = tmp_path / "secrets" / "saxo"
+    token_path = store._path_for_profile("nico-saxo-bank-sim")
+    assert not list(saxo_dir.glob("*.tmp"))
+    assert token_path.exists()
 
 
 def test_file_token_store_returns_none_for_missing_profile(tmp_path):
@@ -72,7 +92,7 @@ def test_file_token_store_json_does_not_include_password_fields(tmp_path):
     store = FileTokenStore(tmp_path)
     store.save("nico-saxo-bank-sim", build_token_set())
 
-    token_path = tmp_path / "secrets" / "saxo" / "nico-saxo-bank-sim.json"
+    token_path = store._path_for_profile("nico-saxo-bank-sim")
     payload = json.loads(token_path.read_text())
 
     assert set(payload) == {
@@ -86,3 +106,20 @@ def test_file_token_store_json_does_not_include_password_fields(tmp_path):
     }
     assert "password" not in payload
     assert "app_secret" not in payload
+
+
+def test_file_token_store_uses_separate_files_for_colliding_profile_ids(tmp_path):
+    store = FileTokenStore(tmp_path)
+    alice_saxo = build_token_set()
+    alice_colon_saxo = replace(alice_saxo, access_token="access-456")
+
+    store.save("alice/saxo", alice_saxo)
+    store.save("alice:saxo", alice_colon_saxo)
+
+    saxo_dir = tmp_path / "secrets" / "saxo"
+    filenames = sorted(path.name for path in saxo_dir.glob("*.json"))
+
+    assert len(filenames) == 2
+    assert filenames[0] != filenames[1]
+    assert store.get("alice/saxo") == alice_saxo
+    assert store.get("alice:saxo") == alice_colon_saxo
