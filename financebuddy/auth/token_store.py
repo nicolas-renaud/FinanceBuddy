@@ -26,7 +26,10 @@ class FileTokenStore:
 
     def save(self, profile_id: str, token_set: TokenSet) -> None:
         path = self._path_for_profile(profile_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self._secrets_dir().mkdir(parents=True, exist_ok=True)
+        self._base_dir().mkdir(parents=True, exist_ok=True)
+        os.chmod(self._secrets_dir(), 0o700)
+        os.chmod(self._base_dir(), 0o700)
 
         payload = {
             **asdict(token_set),
@@ -70,6 +73,9 @@ class FileTokenStore:
 
     def _base_dir(self) -> Path:
         return self._data_dir / "secrets" / "saxo"
+
+    def _secrets_dir(self) -> Path:
+        return self._data_dir / "secrets"
 
 
 def _safe_profile_segment(profile_id: str) -> str:

@@ -45,7 +45,11 @@ def test_file_token_store_writes_restrictive_permissions(tmp_path):
 
     store.save("nico-saxo-bank-sim", build_token_set())
 
+    secrets_dir = tmp_path / "secrets"
+    saxo_dir = tmp_path / "secrets" / "saxo"
     token_path = tmp_path / "secrets" / "saxo" / "nico-saxo-bank-sim.json"
+    assert stat.S_IMODE(secrets_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(saxo_dir.stat().st_mode) == 0o700
     assert stat.S_IMODE(token_path.stat().st_mode) == 0o600
 
 
