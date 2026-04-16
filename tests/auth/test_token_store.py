@@ -29,9 +29,32 @@ def build_token_set() -> TokenSet:
     )
 
 
+def build_token_set_without_refresh_expiry() -> TokenSet:
+    now = datetime(2026, 4, 16, 10, 0, tzinfo=UTC)
+    return TokenSet(
+        access_token="access-123",
+        refresh_token="refresh-123",
+        token_type="Bearer",
+        expires_at=now + timedelta(minutes=20),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash="app-hash",
+    )
+
+
 def test_file_token_store_round_trips_token_set(tmp_path):
     store = FileTokenStore(tmp_path)
     token_set = build_token_set()
+
+    store.save("nico-saxo-bank-sim", token_set)
+
+    loaded = store.get("nico-saxo-bank-sim")
+    assert loaded == token_set
+
+
+def test_file_token_store_round_trips_token_set_without_refresh_expiry(tmp_path):
+    store = FileTokenStore(tmp_path)
+    token_set = build_token_set_without_refresh_expiry()
 
     store.save("nico-saxo-bank-sim", token_set)
 
@@ -106,6 +129,16 @@ def test_file_token_store_json_does_not_include_password_fields(tmp_path):
     }
     assert "password" not in payload
     assert "app_secret" not in payload
+
+
+def test_file_token_store_json_writes_null_refresh_expiry(tmp_path):
+    store = FileTokenStore(tmp_path)
+    store.save("nico-saxo-bank-sim", build_token_set_without_refresh_expiry())
+
+    token_path = store._path_for_profile("nico-saxo-bank-sim")
+    payload = json.loads(token_path.read_text())
+
+    assert payload["refresh_token_expires_at"] is None
 
 
 def test_file_token_store_uses_separate_files_for_colliding_profile_ids(tmp_path):

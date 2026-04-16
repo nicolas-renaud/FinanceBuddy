@@ -16,7 +16,7 @@ class TokenSet:
     refresh_token: str
     token_type: str
     expires_at: datetime
-    refresh_token_expires_at: datetime
+    refresh_token_expires_at: datetime | None
     environment: str
     app_key_hash: str
 
@@ -35,7 +35,11 @@ class FileTokenStore:
         payload = {
             **asdict(token_set),
             "expires_at": token_set.expires_at.isoformat(),
-            "refresh_token_expires_at": token_set.refresh_token_expires_at.isoformat(),
+            "refresh_token_expires_at": (
+                token_set.refresh_token_expires_at.isoformat()
+                if token_set.refresh_token_expires_at is not None
+                else None
+            ),
         }
 
         temp_path: str | None = None
@@ -68,8 +72,10 @@ class FileTokenStore:
             refresh_token=payload["refresh_token"],
             token_type=payload["token_type"],
             expires_at=datetime.fromisoformat(payload["expires_at"]),
-            refresh_token_expires_at=datetime.fromisoformat(
-                payload["refresh_token_expires_at"]
+            refresh_token_expires_at=(
+                datetime.fromisoformat(payload["refresh_token_expires_at"])
+                if payload["refresh_token_expires_at"] is not None
+                else None
             ),
             environment=payload["environment"],
             app_key_hash=payload["app_key_hash"],

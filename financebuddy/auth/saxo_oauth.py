@@ -68,6 +68,7 @@ class SaxoOAuthClient:
     ) -> None:
         self._app_key = app_key
         self._token_url = token_url
+        self._owns_http_client = http_client is None
         self._http_client = http_client or httpx.Client()
         self._now = now or (lambda: datetime.now(tz=UTC))
 
@@ -99,6 +100,21 @@ class SaxoOAuthClient:
         data = self._parse_response(response)
         return self._token_set_from_response(data)
 
+    def close(self) -> None:
+        if self._owns_http_client:
+            self._http_client.close()
+
+    def __enter__(self) -> "SaxoOAuthClient":
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object | None,
+    ) -> None:
+        self.close()
+
     def _post_token(self, payload: dict[str, str]) -> httpx.Response:
         response = self._http_client.post(self._token_url, data=payload)
         if response.status_code >= 400:
@@ -109,24 +125,38 @@ class SaxoOAuthClient:
 
     def _parse_response(self, response: httpx.Response) -> dict[str, Any]:
         try:
-            return response.json()
+            data = response.json()
         except ValueError as exc:  # pragma: no cover - defensive parsing
             raise SaxoOAuthError("Saxo token endpoint returned invalid JSON") from exc
 
+        if not isinstance(data, dict):
+            raise SaxoOAuthError("Saxo token endpoint returned an invalid token response")
+        return data
+
     def _token_set_from_response(self, data: dict[str, Any]) -> TokenSet:
         now = self._now()
-        expires_in = int(data["expires_in"])
-        refresh_token_expires_in = data.get("refresh_token_expires_in")
-        return TokenSet(
-            access_token=data["access_token"],
-            refresh_token=data["refresh_token"],
-            token_type=data["token_type"],
-            expires_at=now + timedelta(seconds=expires_in),
-            refresh_token_expires_at=(
+        try:
+            access_token = data["access_token"]
+            refresh_token = data["refresh_token"]
+            token_type = data["token_type"]
+            expires_in = int(data["expires_in"])
+            refresh_token_expires_in = data.get("refresh_token_expires_in")
+            refresh_token_expires_at = (
                 now + timedelta(seconds=int(refresh_token_expires_in))
                 if refresh_token_expires_in is not None
                 else None
-            ),
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SaxoOAuthError(
+                "Saxo token endpoint returned an invalid token response"
+            ) from exc
+
+        return TokenSet(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            token_type=token_type,
+            expires_at=now + timedelta(seconds=expires_in),
+            refresh_token_expires_at=refresh_token_expires_at,
             environment="sim",
             app_key_hash=hash_app_key(self._app_key),
         )

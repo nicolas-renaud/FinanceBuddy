@@ -125,6 +125,75 @@ def test_refresh_token_returns_updated_token_set():
     assert b"refresh_token=refresh-123" in transport.requests[0].content
 
 
+def test_successful_token_response_requires_an_object():
+    transport = DummyTransport(
+        httpx.Response(
+            200,
+            json=["not", "an", "object"],
+            headers={"content-type": "application/json"},
+        )
+    )
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(transport)),
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(SaxoOAuthError) as exc_info:
+        client.refresh_token("refresh-123")
+
+    assert "token response" in str(exc_info.value)
+
+
+def test_successful_token_response_requires_mandatory_fields():
+    transport = DummyTransport(
+        httpx.Response(
+            200,
+            json={
+                "access_token": "access-123",
+                "token_type": "Bearer",
+                "expires_in": 1200,
+            },
+            headers={"content-type": "application/json"},
+        )
+    )
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(transport)),
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(SaxoOAuthError) as exc_info:
+        client.refresh_token("refresh-123")
+
+    assert "token response" in str(exc_info.value)
+
+
+def test_successful_token_response_requires_numeric_expires_in():
+    transport = DummyTransport(
+        httpx.Response(
+            200,
+            json={
+                "access_token": "access-123",
+                "refresh_token": "refresh-123",
+                "token_type": "Bearer",
+                "expires_in": "not-a-number",
+            },
+            headers={"content-type": "application/json"},
+        )
+    )
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(transport)),
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(SaxoOAuthError) as exc_info:
+        client.refresh_token("refresh-123")
+
+    assert "token response" in str(exc_info.value)
+
+
 def test_token_endpoint_errors_are_redacted():
     transport = DummyTransport(
         httpx.Response(
@@ -144,6 +213,37 @@ def test_token_endpoint_errors_are_redacted():
 
     assert "400" in str(exc_info.value)
     assert "secret-value" not in str(exc_info.value)
+
+
+def test_client_close_closes_owned_http_client():
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    client.close()
+
+
+def test_client_close_does_not_close_injected_http_client():
+    http_client = httpx.Client()
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        http_client=http_client,
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    client.close()
+
+    assert http_client.is_closed is False
+    http_client.close()
+
+
+def test_client_supports_context_manager_for_owned_client():
+    with SaxoOAuthClient(
+        app_key="app-key",
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    ) as client:
+        assert isinstance(client, SaxoOAuthClient)
 
 
 def test_hash_app_key_is_stable_and_not_the_raw_key():
