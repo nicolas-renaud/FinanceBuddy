@@ -194,6 +194,50 @@ def test_successful_token_response_requires_numeric_expires_in():
     assert "token response" in str(exc_info.value)
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("access_token", None),
+        ("access_token", 123),
+        ("access_token", ""),
+        ("refresh_token", None),
+        ("refresh_token", 123),
+        ("refresh_token", ""),
+        ("token_type", None),
+        ("token_type", 123),
+        ("token_type", ""),
+    ],
+)
+def test_successful_token_response_requires_non_empty_string_token_fields(field, value):
+    payload = {
+        "access_token": "access-123",
+        "refresh_token": "refresh-123",
+        "token_type": "Bearer",
+        "expires_in": 1200,
+    }
+    payload[field] = value
+    transport = DummyTransport(
+        httpx.Response(
+            200,
+            json=payload,
+            headers={"content-type": "application/json"},
+        )
+    )
+    client = SaxoOAuthClient(
+        app_key="app-key",
+        http_client=httpx.Client(transport=httpx.MockTransport(transport)),
+        now=lambda: datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+    )
+
+    with pytest.raises(SaxoOAuthError) as exc_info:
+        client.refresh_token("refresh-123")
+
+    assert "token response" in str(exc_info.value)
+    assert "access-123" not in str(exc_info.value)
+    assert "refresh-123" not in str(exc_info.value)
+    assert "Bearer" not in str(exc_info.value)
+
+
 def test_token_endpoint_errors_are_redacted():
     transport = DummyTransport(
         httpx.Response(

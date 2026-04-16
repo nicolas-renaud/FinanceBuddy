@@ -136,9 +136,9 @@ class SaxoOAuthClient:
     def _token_set_from_response(self, data: dict[str, Any]) -> TokenSet:
         now = self._now()
         try:
-            access_token = data["access_token"]
-            refresh_token = data["refresh_token"]
-            token_type = data["token_type"]
+            access_token = _require_non_empty_string(data["access_token"], "access_token")
+            refresh_token = _require_non_empty_string(data["refresh_token"], "refresh_token")
+            token_type = _require_non_empty_string(data["token_type"], "token_type")
             expires_in = int(data["expires_in"])
             refresh_token_expires_in = data.get("refresh_token_expires_in")
             refresh_token_expires_at = (
@@ -160,3 +160,11 @@ class SaxoOAuthClient:
             environment="sim",
             app_key_hash=hash_app_key(self._app_key),
         )
+
+
+def _require_non_empty_string(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or value == "":
+        raise SaxoOAuthError(
+            f"Saxo token endpoint returned an invalid token response: {field_name}"
+        )
+    return value
