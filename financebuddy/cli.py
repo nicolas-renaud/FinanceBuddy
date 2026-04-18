@@ -8,6 +8,13 @@ from typing import Any
 import httpx
 import typer
 
+from financebuddy.auth.saxo_oauth import (
+    SaxoOAuthClient,
+    SaxoOAuthError,
+    SaxoTokenResolver,
+    run_interactive_pkce_login,
+)
+from financebuddy.auth.token_store import FileTokenStore
 from financebuddy.config import load_config
 from financebuddy.connectors.base import AccessProfile, RuntimeCredentials
 from financebuddy.connectors.demo_bank_api import DemoBankApiConnector
@@ -17,6 +24,10 @@ from financebuddy.services.reporting import render_summary
 
 
 app = typer.Typer(help="Local-first finance crawler CLI.")
+saxo_auth_app = typer.Typer(help="Saxo authentication commands.")
+app.add_typer(saxo_auth_app, name="saxo-auth")
+
+_USER_FACING_SAXO_AUTH_ERRORS = (SaxoOAuthError, TimeoutError, ValueError)
 
 
 @app.callback()
@@ -62,11 +73,29 @@ def crawl(
         hide_input=True,
         help="Demo password; prompted interactively if omitted.",
     ),
+    saxo_app_key: str | None = typer.Option(
+        None,
+        "--saxo-app-key",
+        help="Saxo OpenAPI app key. Defaults to SAXO_APP_KEY.",
+    ),
+    auth_login: bool = typer.Option(
+        True,
+        "--auth-login/--no-auth-login",
+        help="Allow interactive Saxo OAuth login when no usable refresh token exists.",
+    ),
+    saxo_auth_port: int = typer.Option(
+        8765,
+        "--saxo-auth-port",
+        help="Localhost port for Saxo OAuth callback.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open-browser/--no-open-browser",
+        help="Open the Saxo OAuth URL in the default browser.",
+    ),
 ) -> None:
     """Run a crawl for a demo or Saxo access profile."""
     config = load_config(data_dir)
-    if saxo_source not in {"fixture", "sim"}:
-        raise typer.BadParameter("--saxo-source must be fixture or sim")
 
     if connector == "demo":
         if fixture is None:
@@ -85,21 +114,10 @@ def crawl(
         )
         credentials = RuntimeCredentials(username=username, password=password)
     elif connector == "saxo":
+        if saxo_source not in {"fixture", "sim"}:
+            raise typer.BadParameter("--saxo-source must be fixture or sim")
         if owner is None:
             raise typer.BadParameter("--owner is required for the Saxo connector")
-
-        if saxo_source == "fixture":
-            if fixture_dir is None:
-                raise typer.BadParameter(
-                    "--fixture-dir is required for Saxo fixture mode"
-                )
-            connector_impl = _build_saxo_connector_from_fixture_dir(fixture_dir)
-        else:
-            connector_impl = _build_saxo_sim_connector()
-
-        access_token = os.environ.get("SAXO_ACCESS_TOKEN")
-        if not access_token:
-            access_token = typer.prompt("Access token", hide_input=True)
 
         profile = AccessProfile(
             profile_id=f"{owner}-saxo-bank-sim",
@@ -107,6 +125,28 @@ def crawl(
             institution_slug="saxo-bank",
             owner_slug=owner,
         )
+        access_token_override = os.environ.get("SAXO_ACCESS_TOKEN")
+
+        if saxo_source == "fixture":
+            if fixture_dir is None:
+                raise typer.BadParameter(
+                    "--fixture-dir is required for Saxo fixture mode"
+                )
+            connector_impl = _build_saxo_connector_from_fixture_dir(fixture_dir)
+            access_token = access_token_override
+            if not access_token:
+                access_token = typer.prompt("Access token", hide_input=True)
+        else:
+            connector_impl = _build_saxo_sim_connector()
+            access_token = _resolve_saxo_sim_access_token(
+                data_dir=config.data_dir,
+                profile_id=profile.profile_id,
+                app_key=saxo_app_key or os.environ.get("SAXO_APP_KEY"),
+                access_token_override=access_token_override,
+                allow_interactive_login=auth_login,
+                auth_port=saxo_auth_port,
+                open_browser=open_browser,
+            )
         credentials = RuntimeCredentials(
             username=owner,
             password="",
@@ -130,6 +170,102 @@ def crawl(
             base_currency=config.base_currency,
         )
     )
+
+
+@saxo_auth_app.command("login")
+def saxo_auth_login(
+    data_dir: Path = typer.Option(..., exists=False),
+    owner: str = typer.Option(
+        ...,
+        "--owner",
+        help="Saxo owner slug used to build the access profile.",
+    ),
+    saxo_app_key: str | None = typer.Option(
+        None,
+        "--saxo-app-key",
+        help="Saxo OpenAPI app key. Defaults to SAXO_APP_KEY.",
+    ),
+    saxo_auth_port: int = typer.Option(
+        8765,
+        "--saxo-auth-port",
+        help="Localhost port for Saxo OAuth callback.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open-browser/--no-open-browser",
+        help="Open the Saxo OAuth URL in the default browser.",
+    ),
+) -> None:
+    """Run interactive Saxo OAuth login and save the token set."""
+    config = load_config(data_dir)
+    profile_id = f"{owner}-saxo-bank-sim"
+    app_key = saxo_app_key or os.environ.get("SAXO_APP_KEY")
+    if not app_key:
+        raise typer.BadParameter("SAXO_APP_KEY is required for Saxo OAuth login")
+
+    oauth_client = SaxoOAuthClient(app_key=app_key)
+    try:
+        try:
+            token_set = run_interactive_pkce_login(
+                app_key=app_key,
+                oauth_client=oauth_client,
+                port=saxo_auth_port,
+                open_browser=open_browser,
+                echo=typer.echo,
+            )
+            FileTokenStore(config.data_dir).save(profile_id, token_set)
+        except _USER_FACING_SAXO_AUTH_ERRORS as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    finally:
+        _close_if_supported(oauth_client)
+
+    typer.echo(f"Saxo authorization saved for {profile_id}")
+
+
+def _resolve_saxo_sim_access_token(
+    *,
+    data_dir: Path,
+    profile_id: str,
+    app_key: str | None,
+    access_token_override: str | None,
+    allow_interactive_login: bool,
+    auth_port: int,
+    open_browser: bool,
+) -> str:
+    effective_app_key = app_key or ""
+    if not access_token_override and not effective_app_key:
+        raise typer.BadParameter("SAXO_APP_KEY is required for Saxo OAuth login")
+
+    oauth_client = SaxoOAuthClient(app_key=effective_app_key)
+    try:
+        resolver = SaxoTokenResolver(
+            app_key=effective_app_key,
+            store=FileTokenStore(data_dir),
+            oauth_client=oauth_client,
+            interactive_login=lambda: run_interactive_pkce_login(
+                app_key=effective_app_key,
+                oauth_client=oauth_client,
+                port=auth_port,
+                open_browser=open_browser,
+                echo=typer.echo,
+            ),
+        )
+        try:
+            return resolver.resolve_access_token(
+                profile_id=profile_id,
+                access_token_override=access_token_override,
+                allow_interactive_login=allow_interactive_login,
+            )
+        except _USER_FACING_SAXO_AUTH_ERRORS as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    finally:
+        _close_if_supported(oauth_client)
+
+
+def _close_if_supported(client: object) -> None:
+    close = getattr(client, "close", None)
+    if close is not None:
+        close()
 
 
 def _build_saxo_connector_from_fixture_dir(fixture_dir: Path) -> SaxoBankConnector:
