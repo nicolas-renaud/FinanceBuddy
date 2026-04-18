@@ -27,6 +27,8 @@ app = typer.Typer(help="Local-first finance crawler CLI.")
 saxo_auth_app = typer.Typer(help="Saxo authentication commands.")
 app.add_typer(saxo_auth_app, name="saxo-auth")
 
+_USER_FACING_SAXO_AUTH_ERRORS = (SaxoOAuthError, TimeoutError, ValueError)
+
 
 @app.callback()
 def main() -> None:
@@ -212,7 +214,7 @@ def saxo_auth_login(
                 echo=typer.echo,
             )
             FileTokenStore(config.data_dir).save(profile_id, token_set)
-        except SaxoOAuthError as exc:
+        except _USER_FACING_SAXO_AUTH_ERRORS as exc:
             raise typer.BadParameter(str(exc)) from exc
     finally:
         _close_if_supported(oauth_client)
@@ -254,7 +256,7 @@ def _resolve_saxo_sim_access_token(
                 access_token_override=access_token_override,
                 allow_interactive_login=allow_interactive_login,
             )
-        except SaxoOAuthError as exc:
+        except _USER_FACING_SAXO_AUTH_ERRORS as exc:
             raise typer.BadParameter(str(exc)) from exc
     finally:
         _close_if_supported(oauth_client)

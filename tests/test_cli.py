@@ -314,6 +314,38 @@ def test_saxo_auth_login_command_reports_oauth_error(
     assert "Traceback" not in result.output
 
 
+def test_saxo_auth_login_command_reports_callback_timeout(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("SAXO_APP_KEY", "app-key")
+    monkeypatch.setattr(
+        "financebuddy.cli.SaxoOAuthClient",
+        lambda *, app_key: SimpleNamespace(app_key=app_key),
+    )
+
+    def fail_login(**kwargs: Any) -> object:
+        raise TimeoutError("Timed out waiting for Saxo OAuth callback")
+
+    monkeypatch.setattr("financebuddy.cli.run_interactive_pkce_login", fail_login)
+
+    result = runner.invoke(
+        app,
+        [
+            "saxo-auth",
+            "login",
+            "--data-dir",
+            str(tmp_path),
+            "--owner",
+            "nico",
+            "--no-open-browser",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Timed out waiting for Saxo OAuth callback" in result.output
+    assert "Traceback" not in result.output
+
+
 def test_saxo_sim_crawl_uses_token_resolver_when_env_token_missing(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -432,6 +464,54 @@ def test_saxo_sim_crawl_passes_env_token_override_to_token_resolver(
         "allow_interactive_login": True,
     }
     assert captured["credentials"].access_token == "token-123"
+
+
+def test_saxo_sim_crawl_reports_implicit_login_callback_value_error(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("SAXO_APP_KEY", "app-key")
+
+    class FakeFileTokenStore:
+        def __init__(self, data_dir: Path) -> None:
+            pass
+
+        def get(self, profile_id: str) -> None:
+            return None
+
+        def save(self, profile_id: str, token_set: object) -> None:
+            raise AssertionError("token should not be saved after failed login")
+
+    def fail_login(**kwargs: Any) -> object:
+        raise ValueError("OAuth callback did not include a code")
+
+    monkeypatch.setattr("financebuddy.cli.FileTokenStore", FakeFileTokenStore)
+    monkeypatch.setattr(
+        "financebuddy.cli.SaxoOAuthClient",
+        lambda *, app_key: SimpleNamespace(app_key=app_key),
+    )
+    monkeypatch.setattr("financebuddy.cli.run_interactive_pkce_login", fail_login)
+    monkeypatch.setattr("financebuddy.cli._build_saxo_sim_connector", lambda: object())
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "sim",
+            "--owner",
+            "nico",
+            "--no-open-browser",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "OAuth callback did not include a code" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_saxo_sim_crawl_no_auth_login_disables_interactive_login(
