@@ -45,11 +45,11 @@ def test_smoke_runs_saxo_fixture_crawl(
     assert "    |-- Cash: 1.250,50 EUR" in result.stdout
     assert "    `-- Invested: 5.424,43 EUR" in result.stdout
     assert (
-        "        |-- Position: NOVO-B qty=12.5 price=987.40 DKK value=12.342,50 DKK (1.653,90 EUR)"
+        "        |-- Position: NOVO-B qty=12.5 unit=987.40 DKK total=12.342,50 DKK (1.653,90 EUR)"
         in result.stdout
     )
     assert (
-        "        `-- Position: CSPX qty=8 price=512.30 USD value=4.098,40 USD (3.770,53 EUR)"
+        "        `-- Position: CSPX qty=8 unit=512.30 USD total=4.098,40 USD (3.770,53 EUR)"
         in result.stdout
     )
     assert (tmp_path / "financebuddy.db").exists()

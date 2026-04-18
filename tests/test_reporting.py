@@ -69,8 +69,8 @@ def test_render_summary_groups_holdings_by_account_in_a_tree_with_base_currency_
             "`-- Total: 6.674,93 EUR",
             "    |-- Cash: 1.250,50 EUR",
             "    `-- Invested: 5.424,43 EUR",
-            "        |-- Position: NOVO-B qty=12.5 price=987.40 DKK value=12.342,50 DKK (1.653,90 EUR)",
-            "        `-- Position: CSPX qty=8 price=512.30 USD value=4.098,40 USD (3.770,53 EUR)",
+            "        |-- Position: NOVO-B qty=12.5 unit=987.40 DKK total=12.342,50 DKK (1.653,90 EUR)",
+            "        `-- Position: CSPX qty=8 unit=512.30 USD total=4.098,40 USD (3.770,53 EUR)",
             "",
             "Account: Saxo Trading Account (brokerage)",
             "`-- Total: 7.746,40 EUR",
@@ -102,6 +102,37 @@ def test_render_summary_raises_for_unsupported_foreign_currency() -> None:
             positions=[],
             base_currency="EUR",
         )
+
+
+def test_render_summary_displays_saxo_venue_symbols_as_primary_symbol() -> None:
+    summary = render_summary(
+        accounts=[
+            AccountPayload(
+                source_account_id="ACC-001",
+                display_name="Saxo Global Account",
+                account_type="brokerage",
+                currency="EUR",
+            )
+        ],
+        balances=[],
+        positions=[
+            PositionPayload(
+                source_account_id="ACC-001",
+                asset_symbol="AAPL:xnas",
+                asset_name="Apple Inc.",
+                quantity="1.0",
+                unit_price="270.23",
+                currency="USD",
+                observed_at=datetime(2026, 4, 17, 13, 30, tzinfo=UTC),
+            )
+        ],
+        base_currency="EUR",
+    )
+
+    assert (
+        "Position: AAPL qty=1.0 unit=270.23 USD total=270,23 USD (248,61 EUR)"
+        in summary
+    )
 
 
 def test_currency_conversion_service_supports_usd_and_dkk_to_eur() -> None:
