@@ -382,6 +382,57 @@ def test_resolver_rejects_refreshed_token_from_different_app_key_without_saving(
     assert store.token_set == old_token
 
 
+def test_resolver_rejects_refreshed_token_mismatch_without_falling_back_to_login():
+    old_token = TokenSet(
+        access_token="old-access",
+        refresh_token="old-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+    replacement_token = TokenSet(
+        access_token="replacement-access",
+        refresh_token="replacement-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 20, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("other-app-key"),
+    )
+
+    class FakeOAuthClient:
+        def refresh_token(self, refresh_token: str) -> TokenSet:
+            assert refresh_token == "old-refresh"
+            return replacement_token
+
+    login_called = []
+
+    def interactive_login():
+        login_called.append(True)
+        raise AssertionError("login should not be called")
+
+    store = MemoryStore(old_token)
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=store,
+        oauth_client=FakeOAuthClient(),
+        interactive_login=interactive_login,
+    )
+
+    with pytest.raises(SaxoOAuthError, match="different app key"):
+        resolver.resolve_access_token(
+            profile_id="nico-saxo-bank-sim",
+            access_token_override=None,
+            allow_interactive_login=True,
+        )
+
+    assert login_called == []
+    assert store.saved == []
+    assert store.token_set == old_token
+
+
 def test_resolver_interactive_login_when_no_token_exists():
     login_token = TokenSet(
         access_token="login-access",

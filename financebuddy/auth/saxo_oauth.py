@@ -21,6 +21,10 @@ class SaxoOAuthError(RuntimeError):
     pass
 
 
+class _SaxoAppKeyMismatchError(SaxoOAuthError):
+    pass
+
+
 class TokenStore(Protocol):
     def get(self, profile_id: str) -> TokenSet | None: ...
 
@@ -213,7 +217,9 @@ class SaxoTokenResolver:
 
             try:
                 refreshed_token = self._refresh_stored_token(stored_token, profile_id)
-            except SaxoOAuthError:
+            except SaxoOAuthError as exc:
+                if isinstance(exc, _SaxoAppKeyMismatchError):
+                    raise
                 if not allow_interactive_login:
                     raise
                 return self._run_interactive_login(profile_id)
@@ -251,7 +257,9 @@ class SaxoTokenResolver:
 
     def _ensure_token_matches_app_key(self, token_set: TokenSet) -> None:
         if token_set.app_key_hash != hash_app_key(self._app_key):
-            raise SaxoOAuthError("Stored Saxo token belongs to a different app key")
+            raise _SaxoAppKeyMismatchError(
+                "Stored Saxo token belongs to a different app key"
+            )
 
 
 def run_interactive_pkce_login(
