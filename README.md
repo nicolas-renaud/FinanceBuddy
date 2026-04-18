@@ -32,8 +32,9 @@ uv run financebuddy crawl \
 ## Run Saxo SIM Crawl
 
 Create a Saxo OpenAPI simulation app with Grant type `PKCE`, Trading enabled
-`no`, and Redirect URL `http://localhost/financebuddy`. Set `SAXO_APP_KEY` in
-your environment, then run:
+`no`, and Redirect URL `http://localhost/financebuddy` if the Saxo portal
+accepts that registration shape. Set `SAXO_APP_KEY` in your environment, then
+run:
 
 ```bash
 uv run financebuddy crawl \
@@ -46,8 +47,11 @@ uv run financebuddy crawl \
 When no usable refresh token exists, the CLI starts an interactive login flow:
 it prints and can open the authorization URL, waits for the localhost callback,
 saves the refresh token under `data/secrets/saxo/`, and continues the crawl.
-Later crawls refresh automatically. Use `--no-auth-login` for non-interactive
-runs, or trigger login explicitly with:
+FinanceBuddy listens on `http://localhost:8765/financebuddy` by default during
+login; change that with `--saxo-auth-port`. If Saxo requires exact redirect
+matching in your app settings, the configured redirect must match the runtime
+callback URL and port. Later crawls refresh automatically. Use `--no-auth-login`
+for non-interactive runs, or trigger login explicitly with:
 
 ```bash
 uv run financebuddy saxo-auth login --data-dir ./data --owner <owner>
