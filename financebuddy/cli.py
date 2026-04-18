@@ -203,14 +203,17 @@ def saxo_auth_login(
 
     oauth_client = SaxoOAuthClient(app_key=app_key)
     try:
-        token_set = run_interactive_pkce_login(
-            app_key=app_key,
-            oauth_client=oauth_client,
-            port=saxo_auth_port,
-            open_browser=open_browser,
-            echo=typer.echo,
-        )
-        FileTokenStore(config.data_dir).save(profile_id, token_set)
+        try:
+            token_set = run_interactive_pkce_login(
+                app_key=app_key,
+                oauth_client=oauth_client,
+                port=saxo_auth_port,
+                open_browser=open_browser,
+                echo=typer.echo,
+            )
+            FileTokenStore(config.data_dir).save(profile_id, token_set)
+        except SaxoOAuthError as exc:
+            raise typer.BadParameter(str(exc)) from exc
     finally:
         _close_if_supported(oauth_client)
 
@@ -227,19 +230,18 @@ def _resolve_saxo_sim_access_token(
     auth_port: int,
     open_browser: bool,
 ) -> str:
-    if access_token_override:
-        return access_token_override
-    if not app_key:
+    effective_app_key = app_key or ""
+    if not access_token_override and not effective_app_key:
         raise typer.BadParameter("SAXO_APP_KEY is required for Saxo OAuth login")
 
-    oauth_client = SaxoOAuthClient(app_key=app_key)
+    oauth_client = SaxoOAuthClient(app_key=effective_app_key)
     try:
         resolver = SaxoTokenResolver(
-            app_key=app_key,
+            app_key=effective_app_key,
             store=FileTokenStore(data_dir),
             oauth_client=oauth_client,
             interactive_login=lambda: run_interactive_pkce_login(
-                app_key=app_key,
+                app_key=effective_app_key,
                 oauth_client=oauth_client,
                 port=auth_port,
                 open_browser=open_browser,
@@ -249,7 +251,7 @@ def _resolve_saxo_sim_access_token(
         try:
             return resolver.resolve_access_token(
                 profile_id=profile_id,
-                access_token_override=None,
+                access_token_override=access_token_override,
                 allow_interactive_login=allow_interactive_login,
             )
         except SaxoOAuthError as exc:
