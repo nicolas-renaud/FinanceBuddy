@@ -210,6 +210,89 @@ def test_connector_maps_sim_me_payloads() -> None:
     ]
 
 
+def test_connector_enriches_sim_position_from_balance_collateral_details() -> None:
+    connector = SaxoBankConnector(
+        client=httpx.Client(
+            transport=httpx.MockTransport(
+                DummyTransport(
+                    {
+                        ("GET", "/sim/openapi/port/v1/accounts/me"): httpx.Response(
+                            200,
+                            json={
+                                "Data": [
+                                    {
+                                        "AccountKey": "SIM-001",
+                                        "ClientKey": "CLIENT-001",
+                                        "AccountId": "22132835",
+                                        "AccountType": "Normal",
+                                        "Currency": "EUR",
+                                    }
+                                ]
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                        ("GET", "/sim/openapi/port/v1/balances?AccountKey=SIM-001&ClientKey=CLIENT-001"): httpx.Response(
+                            200,
+                            json={
+                                "AccountKey": "SIM-001",
+                                "CashBalance": 999760.19,
+                                "Currency": "EUR",
+                                "MarginCollateralNotAvailableDetail": {
+                                    "InstrumentCollateralDetails": [
+                                        {
+                                            "AssetType": "Stock",
+                                            "Description": "Apple Inc.",
+                                            "MarketValue": 229.705363395,
+                                            "Symbol": "AAPL:xnas",
+                                            "Uic": 211,
+                                        }
+                                    ]
+                                },
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                        ("GET", "/sim/openapi/port/v1/positions/me"): httpx.Response(
+                            200,
+                            json={
+                                "Data": [
+                                    {
+                                        "NetPositionId": "211__Share",
+                                        "PositionBase": {
+                                            "AccountKey": "SIM-001",
+                                            "Amount": 1.0,
+                                            "AssetType": "Stock",
+                                            "ExecutionTimeOpen": "2026-04-17T13:30:09.499606Z",
+                                            "Uic": 211,
+                                        },
+                                        "PositionView": {
+                                            "ConversionRateCurrent": 0.8500365,
+                                            "CurrentPrice": 0.0,
+                                            "ExposureCurrency": "USD",
+                                            "MarketValue": 0.0,
+                                        },
+                                    }
+                                ]
+                            },
+                            headers={"content-type": "application/json"},
+                        ),
+                    }
+                )
+            )
+        ),
+        base_url="https://gateway.saxobank.com/sim/openapi",
+    )
+
+    result = connector.fetch(build_profile(), build_credentials())
+
+    assert len(result.positions) == 1
+    position = result.positions[0]
+    assert position.asset_symbol == "AAPL:xnas"
+    assert position.asset_name == "Apple Inc."
+    assert position.quantity == "1.0"
+    assert position.currency == "USD"
+    assert position.unit_price == "270.23"
+
+
 def test_connector_follows_sim_me_pagination() -> None:
     SequencedDateTime.index = 0
     original_datetime = saxo_module.datetime

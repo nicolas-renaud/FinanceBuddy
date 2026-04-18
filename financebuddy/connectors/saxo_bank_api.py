@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from typing import Any
 from urllib.parse import quote, urlencode, urlparse
 
@@ -50,6 +51,7 @@ class SaxoBankConnector:
             )
             snapshots.extend(page.snapshot for page in account_pages)
             account_keys: list[str] = []
+            collateral_details_by_account_uic: dict[tuple[str, str], dict[str, Any]] = {}
             for page in account_pages:
                 for account in page.items:
                     source_account_id = account["AccountKey"]
@@ -76,6 +78,9 @@ class SaxoBankConnector:
                     headers,
                 )
                 snapshots.append(balance_snapshot)
+                collateral_details_by_account_uic.update(
+                    _collateral_details_by_account_uic(account_key, balance_payload)
+                )
                 balances.append(
                     BalancePayload(
                         source_account_id=account_key,
@@ -99,6 +104,11 @@ class SaxoBankConnector:
                     position_base = position.get("PositionBase", {})
                     position_view = position.get("PositionView", {})
                     display = position.get("DisplayAndFormat", {})
+                    collateral_detail = _collateral_detail_for_position(
+                        collateral_details_by_account_uic,
+                        position_base,
+                    )
+                    asset_symbol = _position_symbol(position, collateral_detail)
                     observed_at = _parse_datetime(
                         position_base.get("ExecutionTimeOpen"),
                         fallback=page.snapshot.captured_at,
@@ -106,11 +116,17 @@ class SaxoBankConnector:
                     positions.append(
                         PositionPayload(
                             source_account_id=position_base["AccountKey"],
-                            asset_symbol=_position_symbol(position),
-                            asset_name=display.get("Description", _position_symbol(position)),
+                            asset_symbol=asset_symbol,
+                            asset_name=display.get("Description")
+                            or collateral_detail.get("Description")
+                            or asset_symbol,
                             quantity=str(position_base["Amount"]),
-                            unit_price=_optional_string(position_view.get("CurrentPrice")),
-                            currency=_position_currency(position),
+                            unit_price=_position_unit_price(
+                                position_base,
+                                position_view,
+                                collateral_detail,
+                            ),
+                            currency=_position_currency(position, collateral_detail),
                             observed_at=observed_at,
                         )
                     )
@@ -347,19 +363,28 @@ def _account_display_name(account: dict[str, Any]) -> str:
     )
 
 
-def _position_symbol(position: dict[str, Any]) -> str:
+def _position_symbol(
+    position: dict[str, Any],
+    collateral_detail: dict[str, Any] | None = None,
+) -> str:
+    collateral_detail = collateral_detail or {}
     display = position.get("DisplayAndFormat", {})
     position_base = position.get("PositionBase", {})
     return (
         display.get("Symbol")
+        or collateral_detail.get("Symbol")
         or display.get("Description")
+        or collateral_detail.get("Description")
         or _optional_string(position_base.get("Uic"))
         or position.get("PositionId")
         or "unknown"
     )
 
 
-def _position_currency(position: dict[str, Any]) -> str:
+def _position_currency(
+    position: dict[str, Any],
+    collateral_detail: dict[str, Any] | None = None,
+) -> str:
     display = position.get("DisplayAndFormat", {})
     position_view = position.get("PositionView", {})
     return (
@@ -374,6 +399,85 @@ def _optional_string(value: Any) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _position_unit_price(
+    position_base: dict[str, Any],
+    position_view: dict[str, Any],
+    collateral_detail: dict[str, Any],
+) -> str | None:
+    current_price_value = position_view.get("CurrentPrice")
+    current_price = _optional_string(current_price_value)
+    current_price_decimal = _decimal_from(current_price_value)
+    if current_price_decimal is not None and current_price_decimal != Decimal("0"):
+        return current_price
+
+    derived_price = _derive_unit_price_from_collateral(
+        position_base,
+        position_view,
+        collateral_detail,
+    )
+    return derived_price or current_price
+
+
+def _derive_unit_price_from_collateral(
+    position_base: dict[str, Any],
+    position_view: dict[str, Any],
+    collateral_detail: dict[str, Any],
+) -> str | None:
+    market_value = _decimal_from(collateral_detail.get("MarketValue"))
+    conversion_rate = _decimal_from(position_view.get("ConversionRateCurrent"))
+    quantity = _decimal_from(position_base.get("Amount"))
+
+    if market_value is None or conversion_rate is None or quantity is None:
+        return None
+    if conversion_rate == 0 or quantity == 0:
+        return None
+
+    return str(abs(market_value) / abs(conversion_rate) / abs(quantity))
+
+
+def _collateral_details_by_account_uic(
+    account_key: str,
+    balance_payload: dict[str, Any],
+) -> dict[tuple[str, str], dict[str, Any]]:
+    details: dict[tuple[str, str], dict[str, Any]] = {}
+    for detail in _instrument_collateral_details(balance_payload):
+        uic = _optional_string(detail.get("Uic"))
+        if uic is not None:
+            details[(account_key, uic)] = detail
+    return details
+
+
+def _instrument_collateral_details(balance_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    detail_containers = [
+        balance_payload.get("MarginCollateralNotAvailableDetail", {}),
+        balance_payload.get("InitialMargin", {}).get("MarginCollateralNotAvailableDetail", {}),
+    ]
+    details: list[dict[str, Any]] = []
+    for container in detail_containers:
+        details.extend(container.get("InstrumentCollateralDetails", []))
+    return details
+
+
+def _collateral_detail_for_position(
+    collateral_details_by_account_uic: dict[tuple[str, str], dict[str, Any]],
+    position_base: dict[str, Any],
+) -> dict[str, Any]:
+    account_key = position_base.get("AccountKey")
+    uic = _optional_string(position_base.get("Uic"))
+    if account_key is None or uic is None:
+        return {}
+    return collateral_details_by_account_uic.get((account_key, uic), {})
+
+
+def _decimal_from(value: Any) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return None
 
 
 def _safe_snapshot_segment(value: str) -> str:

@@ -100,18 +100,19 @@ def _format_position_line(
     base_currency: str,
 ) -> str:
     price = position.unit_price or "n/a"
+    display_symbol = _display_asset_symbol(position.asset_symbol)
     if position.unit_price is None:
         return (
-            f"Position: {position.asset_symbol} qty={position.quantity} "
-            f"price={price} value=n/a"
+            f"Position: {display_symbol} qty={position.quantity} "
+            f"unit={price} total=n/a"
         )
 
     native_value = _quantize(Decimal(position.quantity) * Decimal(position.unit_price))
     base_value = converter.convert(native_value, position.currency)
     return (
-        f"Position: {position.asset_symbol} qty={position.quantity} "
-        f"price={price} {position.currency} "
-        f"value={_format_decimal(native_value)} {position.currency} "
+        f"Position: {display_symbol} qty={position.quantity} "
+        f"unit={price} {position.currency} "
+        f"total={_format_decimal(native_value)} {position.currency} "
         f"({_format_decimal(base_value)} {base_currency})"
     )
 
@@ -133,3 +134,10 @@ def _quantize(amount: Decimal) -> Decimal:
 def _format_decimal(amount: Decimal) -> str:
     normalized = f"{_quantize(amount):,.2f}"
     return normalized.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _display_asset_symbol(asset_symbol: str) -> str:
+    symbol, separator, venue = asset_symbol.partition(":")
+    if separator and symbol and venue.islower():
+        return symbol
+    return asset_symbol
