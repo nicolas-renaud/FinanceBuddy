@@ -89,7 +89,6 @@ class LocalCallbackServer:
                 params = parse_qs(parsed.query)
                 state = params.get("state", [""])[0]
                 if state != outer._expected_state:
-                    outer._callback_queue.put(ValueError("OAuth state mismatch"))
                     self._send_text_response(400, b"OAuth state mismatch")
                     return
 
