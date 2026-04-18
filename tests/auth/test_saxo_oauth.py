@@ -9,11 +9,14 @@ import pytest
 from financebuddy.auth.saxo_oauth import (
     SaxoOAuthClient,
     SaxoOAuthError,
+    SaxoTokenResolver,
     build_authorization_url,
     code_challenge_for,
     hash_app_key,
     new_code_verifier,
+    run_interactive_pkce_login,
 )
+from financebuddy.auth.token_store import TokenSet
 
 
 class DummyTransport:
@@ -257,6 +260,298 @@ def test_token_endpoint_errors_are_redacted():
 
     assert "400" in str(exc_info.value)
     assert "secret-value" not in str(exc_info.value)
+
+
+class MemoryStore:
+    def __init__(self, token_set=None) -> None:
+        self.token_set = token_set
+        self.saved = []
+
+    def get(self, profile_id: str):
+        return self.token_set
+
+    def save(self, profile_id: str, token_set: TokenSet) -> None:
+        self.saved.append((profile_id, token_set))
+        self.token_set = token_set
+
+    def delete(self, profile_id: str) -> None:
+        self.token_set = None
+
+
+def test_resolver_uses_access_token_override_without_store_access():
+    class FailingStore:
+        def get(self, profile_id: str):
+            raise AssertionError("store should not be read")
+
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=FailingStore(),
+        oauth_client=None,
+        interactive_login=None,
+    )
+
+    assert resolver.resolve_access_token(
+        profile_id="nico-saxo-bank-sim",
+        access_token_override="override-token",
+        allow_interactive_login=False,
+    ) == "override-token"
+
+
+def test_resolver_refreshes_stored_token_and_saves_replacement():
+    old_token = TokenSet(
+        access_token="old-access",
+        refresh_token="old-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+    new_token = TokenSet(
+        access_token="new-access",
+        refresh_token="new-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 20, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+
+    class FakeOAuthClient:
+        def refresh_token(self, refresh_token: str) -> TokenSet:
+            assert refresh_token == "old-refresh"
+            return new_token
+
+    store = MemoryStore(old_token)
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=store,
+        oauth_client=FakeOAuthClient(),
+        interactive_login=None,
+    )
+
+    assert resolver.resolve_access_token(
+        profile_id="nico-saxo-bank-sim",
+        access_token_override=None,
+        allow_interactive_login=False,
+    ) == "new-access"
+    assert store.saved == [("nico-saxo-bank-sim", new_token)]
+
+
+def test_resolver_interactive_login_when_no_token_exists():
+    login_token = TokenSet(
+        access_token="login-access",
+        refresh_token="login-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 20, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+
+    store = MemoryStore()
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=store,
+        oauth_client=None,
+        interactive_login=lambda: login_token,
+    )
+
+    assert resolver.resolve_access_token(
+        profile_id="nico-saxo-bank-sim",
+        access_token_override=None,
+        allow_interactive_login=True,
+    ) == "login-access"
+    assert store.saved == [("nico-saxo-bank-sim", login_token)]
+
+
+def test_resolver_fails_when_no_token_and_login_disabled():
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=MemoryStore(),
+        oauth_client=None,
+        interactive_login=None,
+    )
+
+    with pytest.raises(SaxoOAuthError, match="No Saxo refresh token is stored"):
+        resolver.resolve_access_token(
+            profile_id="nico-saxo-bank-sim",
+            access_token_override=None,
+            allow_interactive_login=False,
+        )
+
+
+def test_resolver_interactive_login_when_refresh_is_rejected():
+    old_token = TokenSet(
+        access_token="old-access",
+        refresh_token="old-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+    login_token = TokenSet(
+        access_token="login-access",
+        refresh_token="login-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 20, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("app-key"),
+    )
+
+    class RejectingOAuthClient:
+        def refresh_token(self, refresh_token: str) -> TokenSet:
+            raise SaxoOAuthError("Saxo token endpoint returned 400")
+
+    store = MemoryStore(old_token)
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=store,
+        oauth_client=RejectingOAuthClient(),
+        interactive_login=lambda: login_token,
+    )
+
+    assert resolver.resolve_access_token(
+        profile_id="nico-saxo-bank-sim",
+        access_token_override=None,
+        allow_interactive_login=True,
+    ) == "login-access"
+    assert store.saved == [("nico-saxo-bank-sim", login_token)]
+
+
+def test_resolver_rejects_token_from_different_app_key_without_refresh_or_login():
+    stored_token = TokenSet(
+        access_token="old-access",
+        refresh_token="old-refresh",
+        token_type="Bearer",
+        expires_at=datetime(2026, 4, 16, 10, 0, tzinfo=UTC),
+        refresh_token_expires_at=None,
+        environment="sim",
+        app_key_hash=hash_app_key("other-app-key"),
+    )
+
+    class FailingOAuthClient:
+        def refresh_token(self, refresh_token: str) -> TokenSet:
+            raise AssertionError("refresh should not be called")
+
+    login_called = []
+
+    def interactive_login():
+        login_called.append(True)
+        raise AssertionError("login should not be called")
+
+    resolver = SaxoTokenResolver(
+        app_key="app-key",
+        store=MemoryStore(stored_token),
+        oauth_client=FailingOAuthClient(),
+        interactive_login=interactive_login,
+    )
+
+    with pytest.raises(SaxoOAuthError, match="different app key"):
+        resolver.resolve_access_token(
+            profile_id="nico-saxo-bank-sim",
+            access_token_override=None,
+            allow_interactive_login=True,
+        )
+
+    assert login_called == []
+
+
+def test_run_interactive_pkce_login_opens_browser_and_exchanges_callback_code(monkeypatch, capsys):
+    callback_created = []
+    open_calls = []
+
+    class FakeCallbackServer:
+        def __init__(self, *, host, port, path, expected_state) -> None:
+            callback_created.append(
+                {
+                    "host": host,
+                    "port": port,
+                    "path": path,
+                    "expected_state": expected_state,
+                }
+            )
+            self.redirect_uri = "http://localhost:8765/financebuddy"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def wait_for_callback(self, timeout_seconds: float):
+            return type("CallbackResult", (), {"code": "callback-code", "state": "callback-state"})()
+
+    monkeypatch.setattr("financebuddy.auth.saxo_oauth.LocalCallbackServer", FakeCallbackServer)
+    monkeypatch.setattr("financebuddy.auth.saxo_oauth.new_state", lambda: "state-123")
+    monkeypatch.setattr("financebuddy.auth.saxo_oauth.new_code_verifier", lambda: "verifier-123")
+    monkeypatch.setattr("financebuddy.auth.saxo_oauth.webbrowser.open", lambda url: open_calls.append(url))
+
+    class FakeOAuthClient:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def exchange_code(self, *, code: str, redirect_uri: str, code_verifier: str) -> TokenSet:
+            self.calls.append(
+                {
+                    "code": code,
+                    "redirect_uri": redirect_uri,
+                    "code_verifier": code_verifier,
+                }
+            )
+            return TokenSet(
+                access_token="access-123",
+                refresh_token="refresh-123",
+                token_type="Bearer",
+                expires_at=datetime(2026, 4, 16, 10, 20, tzinfo=UTC),
+                refresh_token_expires_at=None,
+                environment="sim",
+                app_key_hash=hash_app_key("app-key"),
+            )
+
+    oauth_client = FakeOAuthClient()
+
+    token_set = run_interactive_pkce_login(
+        app_key="app-key",
+        oauth_client=oauth_client,
+        open_browser=True,
+        echo=print,
+    )
+
+    captured = capsys.readouterr().out
+    assert "Open this Saxo authorization URL to continue:" in captured
+    assert "access-123" not in captured
+    assert "refresh-123" not in captured
+    assert len(open_calls) == 1
+    parsed = urlparse(open_calls[0])
+    params = parse_qs(parsed.query)
+    assert parsed.scheme == "https"
+    assert parsed.netloc == "sim.logonvalidation.net"
+    assert parsed.path == "/authorize"
+    assert params["response_type"] == ["code"]
+    assert params["client_id"] == ["app-key"]
+    assert params["redirect_uri"] == ["http://localhost:8765/financebuddy"]
+    assert params["state"] == ["state-123"]
+    assert params["code_challenge_method"] == ["S256"]
+    assert params["code_challenge"] == [code_challenge_for("verifier-123")]
+    assert oauth_client.calls == [
+        {
+            "code": "callback-code",
+            "redirect_uri": "http://localhost:8765/financebuddy",
+            "code_verifier": "verifier-123",
+        }
+    ]
+    assert token_set.access_token == "access-123"
+    assert callback_created == [
+        {
+            "host": "127.0.0.1",
+            "port": 8765,
+            "path": "/financebuddy",
+            "expected_state": "state-123",
+        }
+    ]
 
 
 def test_client_close_closes_owned_http_client():

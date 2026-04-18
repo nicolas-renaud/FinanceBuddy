@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import webbrowser
 import secrets
 from datetime import UTC, datetime, timedelta
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 from urllib.parse import urlencode
 
 import httpx
 
+from financebuddy.auth.saxo_callback import LocalCallbackServer
 from financebuddy.auth.token_store import TokenSet
 
 SIM_AUTHORIZE_URL = "https://sim.logonvalidation.net/authorize"
@@ -17,6 +19,14 @@ SIM_TOKEN_URL = "https://sim.logonvalidation.net/token"
 
 class SaxoOAuthError(RuntimeError):
     pass
+
+
+class TokenStore(Protocol):
+    def get(self, profile_id: str) -> TokenSet | None: ...
+
+    def save(self, profile_id: str, token_set: TokenSet) -> None: ...
+
+    def delete(self, profile_id: str) -> None: ...
 
 
 def new_code_verifier() -> str:
@@ -168,3 +178,112 @@ def _require_non_empty_string(value: Any, field_name: str) -> str:
             f"Saxo token endpoint returned an invalid token response: {field_name}"
         )
     return value
+
+
+class SaxoTokenResolver:
+    def __init__(
+        self,
+        *,
+        app_key: str,
+        store: TokenStore,
+        oauth_client: SaxoOAuthClient | None,
+        interactive_login: Callable[[], TokenSet] | None,
+    ) -> None:
+        self._app_key = app_key
+        self._store = store
+        self._oauth_client = oauth_client
+        self._interactive_login = interactive_login
+
+    def resolve_access_token(
+        self,
+        *,
+        profile_id: str,
+        access_token_override: str | None,
+        allow_interactive_login: bool,
+    ) -> str:
+        if access_token_override:
+            return access_token_override
+
+        stored_token = self._store.get(profile_id)
+        if stored_token is not None:
+            if stored_token.app_key_hash != hash_app_key(self._app_key):
+                raise SaxoOAuthError(
+                    "Stored Saxo token belongs to a different app key"
+                )
+
+            try:
+                refreshed_token = self._refresh_stored_token(stored_token, profile_id)
+            except SaxoOAuthError:
+                if not allow_interactive_login:
+                    raise
+                return self._run_interactive_login(profile_id)
+
+            return refreshed_token.access_token
+
+        if not allow_interactive_login:
+            raise SaxoOAuthError(
+                "No Saxo refresh token is stored. Run without --no-auth-login or run `financebuddy saxo-auth login`."
+            )
+
+        return self._run_interactive_login(profile_id)
+
+    def _refresh_stored_token(
+        self,
+        stored_token: TokenSet,
+        profile_id: str,
+    ) -> TokenSet:
+        if self._oauth_client is None:
+            raise SaxoOAuthError("Saxo OAuth client is not configured")
+
+        refreshed_token = self._oauth_client.refresh_token(stored_token.refresh_token)
+        self._store.save(profile_id, refreshed_token)
+        return refreshed_token
+
+    def _run_interactive_login(self, profile_id: str) -> str:
+        if self._interactive_login is None:
+            raise SaxoOAuthError("Interactive Saxo login is not configured")
+
+        token_set = self._interactive_login()
+        self._store.save(profile_id, token_set)
+        return token_set.access_token
+
+
+def run_interactive_pkce_login(
+    *,
+    app_key: str,
+    oauth_client: SaxoOAuthClient,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    path: str = "/financebuddy",
+    timeout_seconds: float = 180,
+    open_browser: bool = True,
+    echo: Callable[[str], object] = print,
+) -> TokenSet:
+    state = new_state()
+    verifier = new_code_verifier()
+    challenge = code_challenge_for(verifier)
+
+    with LocalCallbackServer(
+        host=host,
+        port=port,
+        path=path,
+        expected_state=state,
+    ) as callback:
+        authorization_url = build_authorization_url(
+            app_key=app_key,
+            redirect_uri=callback.redirect_uri,
+            state=state,
+            code_challenge=challenge,
+        )
+        echo("Open this Saxo authorization URL to continue:")
+        echo(authorization_url)
+        if open_browser:
+            webbrowser.open(authorization_url)
+
+        result = callback.wait_for_callback(timeout_seconds)
+
+    return oauth_client.exchange_code(
+        code=result.code,
+        redirect_uri=callback.redirect_uri,
+        code_verifier=verifier,
+    )
