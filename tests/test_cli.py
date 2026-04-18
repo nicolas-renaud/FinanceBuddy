@@ -1,4 +1,6 @@
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 from typer.testing import CliRunner
 
@@ -22,8 +24,8 @@ def test_crawl_help_mentions_connector_and_saxo_fixture_dir() -> None:
 
     assert result.exit_code == 0
     assert "demo|saxo" in result.stdout
-    assert "tests/fixtures/saxo_bank" in result.stdout
-    assert "Saxo owner slug used to build the access" in result.stdout
+    assert "--fixture-dir" in result.stdout
+    assert "--owner" in result.stdout
 
 
 def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
@@ -205,6 +207,188 @@ def test_crawl_command_prompts_for_saxo_access_token(
     assert row["profile_id"] == "nico-saxo-bank-sim"
     assert row["connector_id"] == "saxo_bank_api"
     assert row["warnings_json"] == "[]"
+
+
+def test_saxo_auth_login_command_saves_token(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("SAXO_APP_KEY", "app-key")
+    saved: dict[str, Any] = {}
+
+    class FakeFileTokenStore:
+        def __init__(self, data_dir: Path) -> None:
+            saved["data_dir"] = data_dir
+
+        def save(self, profile_id: str, token_set: object) -> None:
+            saved["token"] = (profile_id, token_set.access_token)
+
+    fake_token = SimpleNamespace(access_token="access-from-login")
+
+    monkeypatch.setattr("financebuddy.cli.FileTokenStore", FakeFileTokenStore)
+    monkeypatch.setattr(
+        "financebuddy.cli.SaxoOAuthClient",
+        lambda *, app_key: SimpleNamespace(app_key=app_key),
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.run_interactive_pkce_login",
+        lambda **kwargs: fake_token,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "saxo-auth",
+            "login",
+            "--data-dir",
+            str(tmp_path),
+            "--owner",
+            "nico",
+            "--no-open-browser",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert saved["data_dir"] == tmp_path
+    assert saved["token"] == ("nico-saxo-bank-sim", "access-from-login")
+    assert "Saxo authorization saved for nico-saxo-bank-sim" in result.stdout
+
+
+def test_saxo_sim_crawl_uses_token_resolver_when_env_token_missing(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("SAXO_APP_KEY", "app-key")
+    captured: dict[str, Any] = {}
+
+    class FakeSaxoTokenResolver:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["resolver_init"] = kwargs
+
+        def resolve_access_token(self, **kwargs: Any) -> str:
+            captured["resolve"] = kwargs
+            return "resolved-token"
+
+    monkeypatch.setattr("financebuddy.cli.SaxoTokenResolver", FakeSaxoTokenResolver)
+    monkeypatch.setattr(
+        "financebuddy.cli.FileTokenStore",
+        lambda data_dir: SimpleNamespace(data_dir=data_dir),
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.SaxoOAuthClient",
+        lambda *, app_key: SimpleNamespace(app_key=app_key),
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.run_interactive_pkce_login",
+        lambda **kwargs: SimpleNamespace(access_token="unused"),
+    )
+    monkeypatch.setattr("financebuddy.cli._build_saxo_sim_connector", lambda: object())
+
+    def fake_run_crawl(**kwargs: Any) -> dict[str, list[object]]:
+        captured["credentials"] = kwargs["credentials"]
+        return {"accounts": [], "balances": [], "positions": [], "warnings": []}
+
+    monkeypatch.setattr("financebuddy.cli.run_crawl", fake_run_crawl)
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "sim",
+            "--owner",
+            "nico",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["resolve"] == {
+        "profile_id": "nico-saxo-bank-sim",
+        "access_token_override": None,
+        "allow_interactive_login": True,
+    }
+    assert captured["credentials"].access_token == "resolved-token"
+
+
+def test_saxo_sim_crawl_no_auth_login_disables_interactive_login(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+    monkeypatch.setenv("SAXO_APP_KEY", "app-key")
+    captured: dict[str, Any] = {}
+
+    class FakeSaxoTokenResolver:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def resolve_access_token(self, **kwargs: Any) -> str:
+            captured["resolve"] = kwargs
+            return "resolved-token"
+
+    monkeypatch.setattr("financebuddy.cli.SaxoTokenResolver", FakeSaxoTokenResolver)
+    monkeypatch.setattr(
+        "financebuddy.cli.FileTokenStore",
+        lambda data_dir: SimpleNamespace(data_dir=data_dir),
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.SaxoOAuthClient",
+        lambda *, app_key: SimpleNamespace(app_key=app_key),
+    )
+    monkeypatch.setattr(
+        "financebuddy.cli.run_interactive_pkce_login",
+        lambda **kwargs: SimpleNamespace(access_token="unused"),
+    )
+    monkeypatch.setattr("financebuddy.cli._build_saxo_sim_connector", lambda: object())
+    monkeypatch.setattr(
+        "financebuddy.cli.run_crawl",
+        lambda **kwargs: {"accounts": [], "balances": [], "positions": [], "warnings": []},
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "sim",
+            "--owner",
+            "nico",
+            "--no-auth-login",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert captured["resolve"]["allow_interactive_login"] is False
+
+
+def test_saxo_sim_crawl_requires_app_key_without_env_token(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.delenv("SAXO_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("SAXO_APP_KEY", raising=False)
+
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "saxo",
+            "--saxo-source",
+            "sim",
+            "--owner",
+            "nico",
+            "--no-auth-login",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "SAXO_APP_KEY is required" in result.output
 
 
 def test_load_config_uses_default_data_dir() -> None:
