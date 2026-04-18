@@ -236,6 +236,7 @@ class SaxoTokenResolver:
             raise SaxoOAuthError("Saxo OAuth client is not configured")
 
         refreshed_token = self._oauth_client.refresh_token(stored_token.refresh_token)
+        self._ensure_token_matches_app_key(refreshed_token)
         self._store.save(profile_id, refreshed_token)
         return refreshed_token
 
@@ -244,8 +245,13 @@ class SaxoTokenResolver:
             raise SaxoOAuthError("Interactive Saxo login is not configured")
 
         token_set = self._interactive_login()
+        self._ensure_token_matches_app_key(token_set)
         self._store.save(profile_id, token_set)
         return token_set.access_token
+
+    def _ensure_token_matches_app_key(self, token_set: TokenSet) -> None:
+        if token_set.app_key_hash != hash_app_key(self._app_key):
+            raise SaxoOAuthError("Stored Saxo token belongs to a different app key")
 
 
 def run_interactive_pkce_login(
