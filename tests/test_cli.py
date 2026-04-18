@@ -56,6 +56,36 @@ def test_crawl_command_runs_demo_connector(tmp_path: Path) -> None:
     assert row["warnings_json"] == "[]"
 
 
+def test_crawl_command_ignores_saxo_source_for_demo_connector(
+    tmp_path: Path,
+) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "crawl",
+            "--data-dir",
+            str(tmp_path),
+            "--connector",
+            "demo",
+            "--saxo-source",
+            "invalid",
+            "--fixture",
+            "tests/fixtures/demo_bank/accounts.json",
+            "--username",
+            "bob",
+        ],
+        input="secret\n",
+    )
+
+    assert result.exit_code == 0
+    assert "Main checking" in result.stdout
+    row = connect(tmp_path / "financebuddy.db").execute(
+        "SELECT profile_id, connector_id FROM crawl_runs"
+    ).fetchone()
+    assert row["profile_id"] == "bob-demo-bank"
+    assert row["connector_id"] == "demo_bank_api"
+
+
 def test_crawl_command_runs_saxo_connector_with_env_token(
     tmp_path: Path, monkeypatch
 ) -> None:

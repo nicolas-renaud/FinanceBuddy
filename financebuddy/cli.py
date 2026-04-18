@@ -94,8 +94,6 @@ def crawl(
 ) -> None:
     """Run a crawl for a demo or Saxo access profile."""
     config = load_config(data_dir)
-    if saxo_source not in {"fixture", "sim"}:
-        raise typer.BadParameter("--saxo-source must be fixture or sim")
 
     if connector == "demo":
         if fixture is None:
@@ -114,6 +112,8 @@ def crawl(
         )
         credentials = RuntimeCredentials(username=username, password=password)
     elif connector == "saxo":
+        if saxo_source not in {"fixture", "sim"}:
+            raise typer.BadParameter("--saxo-source must be fixture or sim")
         if owner is None:
             raise typer.BadParameter("--owner is required for the Saxo connector")
 
